@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>オセロ（最強AI）</title>
+<style>
+:root{--bg:#eef2f5;--panel:#fff;--line:#d6dee6;--tx:#1b2a3a;--mut:#6b7c8f;--board:#1f7a4d;--cell:#23874f;--ac:#0f9d76}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif}
+#app{max-width:560px;margin:0 auto;padding:12px 16px 28px}
+h1{font-size:20px;margin:6px 0 10px;letter-spacing:.05em}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+label{font-size:14px;color:var(--mut)}
+select,button{font:inherit;font-size:15px;color:var(--tx);background:#fff;border:1px solid #c6d2de;border-radius:10px;padding:8px 12px;min-height:42px}
+button{cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:700}
+#score{display:flex;gap:10px;margin:10px 0}
+.side{flex:1;display:flex;align-items:center;gap:10px;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:8px 12px;font-size:15px}
+.side.turn{border-color:var(--ac)}
+.side b{font-size:24px;margin-left:auto}
+.disc{width:22px;height:22px;border-radius:50%;flex:none}
+.disc.k{background:#111}.disc.w{background:#fafafa;border:1px solid #999}
+#board{display:grid;grid-template-columns:20px repeat(8,1fr);grid-template-rows:20px repeat(8,1fr);gap:0;width:min(100%,max(300px,100vh - 250px));margin:0 auto;aspect-ratio:1;user-select:none;-webkit-user-select:none}
+.lab{display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--mut)}
+.sq{background:var(--cell);border:1px solid #145c39;display:flex;align-items:center;justify-content:center;position:relative;cursor:default}
+.sq.can{cursor:pointer}
+.sq.can::after{content:"";width:22%;height:22%;border-radius:50%;background:rgba(0,0,0,.28)}
+.sq.hint{box-shadow:inset 0 0 0 4px #ffd34d}
+.sq .st{width:84%;height:84%;border-radius:50%;transition:background .25s}
+.sq .st.k{background:radial-gradient(circle at 35% 30%,#555,#000 70%)}
+.sq .st.w{background:radial-gradient(circle at 35% 30%,#fff,#d8d8d8 75%)}
+.sq.last .st::after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:#e0484d}
+#msg{min-height:46px;margin:10px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ac);border-radius:10px;font-size:15px;line-height:1.5}
+#info{font-size:13px;color:var(--mut);min-height:20px}
+details{margin-top:14px;font-size:14px;color:var(--mut);line-height:1.7}
+summary{cursor:pointer}
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>オセロ（最強AI）</h1>
+  <div class="row">
+    <label>対戦<select id="mode">
+      <option value="b">自分が黒（先手）</option>
+      <option value="w">自分が白（後手）</option>
+      <option value="2">ふたりで対戦</option>
+      <option value="ai">AI どうし</option>
+    </select></label>
+    <label>AIの考える時間<select id="time">
+      <option value="1000">1 秒（弱め）</option>
+      <option value="3000" selected>3 秒</option>
+      <option value="10000">10 秒（最強）</option>
+    </select></label>
+  </div>
+  <div class="row">
+    <button id="new" class="primary">新しいゲーム</button>
+    <button id="undo">待った</button>
+    <button id="hint">ヒント</button>
+  </div>
+  <div id="score">
+    <div class="side" id="sideK"><span class="disc k"></span><span id="nameK">黒</span><b id="cntK">2</b></div>
+    <div class="side" id="sideW"><span class="disc w"></span><span id="nameW">白</span><b id="cntW">2</b></div>
+  </div>
+  <div id="board"></div>
+  <div id="msg">読み込み中…</div>
+  <div id="info"></div>
+  <details>
+    <summary>遊び方・AI のしくみ</summary>
+    黒から交互に打ちます。相手の石をはさめる場所（小さな点）にだけ打てます。打てる場所が無いときは自動でパスになります。<br>
+    「待った」で自分の前の手に戻り、「ヒント」で AI のおすすめの手が黄色く光ります。<br>
+    AI はビットボード＋αβ探索（PVS）＋置換表で読み、終盤は最後まで読み切って最善手を打ちます（「完全読み」と表示）。考える時間が長いほど強くなります。
+  </details>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const FULL = (1n << 64n) - 1n;
+const split = (p, o) => [Number(p & 0xffffffffn), Number(p >> 32n), Number(o & 0xffffffffn), Number(o >> 32n)];
+const name = sq => 'abcdefgh'[sq & 7] + ((sq >> 3) + 1);
+
+let rules = null;              // main-thread engine instance (move generation only)
+let worker = null;
+let st, hist, humanK, humanW, thinking = 0, reqId = 0, hintSq = -1, lastSq = -1;
+
+function mkWorker() {
+  if (worker) worker.terminate();
+  worker = new Worker('worker.js');
+  worker.onmessage = onResult;
+  worker.onerror = () => say('AI の読み込みに失敗しました。ページを再読み込みしてください。');
+}
+
+function moves(p, o) {
+  rules.moves(...split(p, o));
+  return BigInt(rules.ret_hi() >>> 0) << 32n | BigInt(rules.ret_lo() >>> 0);
+}
+function flips(p, o, sq) {
+  rules.flips(...split(p, o), sq);
+  return BigInt(rules.ret_hi() >>> 0) << 32n | BigInt(rules.ret_lo() >>> 0);
+}
+const cnt = x => { let n = 0; while (x) { x &= x - 1n; n++; } return n; };
+// side to move / opponent
+const me = s => s.blackToMove ? s.k : s.w;
+const op = s => s.blackToMove ? s.w : s.k;
+const isHuman = s => s.blackToMove ? humanK : humanW;
+const over = s => !moves(me(s), op(s)) && !moves(op(s), me(s));
+
+function play(sq) {
+  hist.push({ ...st, lastSq });
+  if (sq >= 0) {
+    const f = flips(me(st), op(st), sq), bit = 1n << BigInt(sq);
+    if (st.blackToMove) { st.k |= f | bit; st.w &= ~f & FULL; }
+    else { st.w |= f | bit; st.k &= ~f & FULL; }
+  }
+  st.blackToMove = !st.blackToMove;
+  lastSq = sq >= 0 ? sq : lastSq;
+  hintSq = -1;
+}
+
+function say(t) { $('msg').textContent = t; }
+
+function render() {
+  const can = isHuman(st) && !thinking ? moves(me(st), op(st)) : 0n;
+  for (let sq = 0; sq < 64; sq++) {
+    const el = cells[sq], bit = 1n << BigInt(sq);
+    const c = st.k & bit ? 'k' : st.w & bit ? 'w' : '';
+    el.className = 'sq' + (can & bit ? ' can' : '') + (sq === hintSq ? ' hint' : '') + (sq === lastSq ? ' last' : '');
+    el.firstChild.className = c ? 'st ' + c : '';
+  }
+  $('cntK').textContent = cnt(st.k);
+  $('cntW').textContent = cnt(st.w);
+  $('sideK').classList.toggle('turn', st.blackToMove && !over(st));
+  $('sideW').classList.toggle('turn', !st.blackToMove && !over(st));
+  $('undo').disabled = !hist.some(h => (h.blackToMove ? humanK : humanW));
+  $('hint').disabled = !!thinking || !isHuman(st) || over(st);
+}
+
+// Advances the game: handles passes, game end, and starts the AI when it is its turn.
+function step() {
+  if (over(st)) {
+    const k = cnt(st.k), w = cnt(st.w);
+    say(`終局　黒 ${k} − ${w} 白　→ ${k > w ? '黒の勝ち' : k < w ? '白の勝ち' : '引き分け'}${humanK !== humanW ? (k === w ? '' : (k > w) === humanK ? '！あなたの勝ち' : '。AI の勝ち') : ''}`);
+    render();
+    return;
+  }
+  if (!moves(me(st), op(st))) {
+    const who = st.blackToMove ? '黒' : '白';
+    play(-1);
+    say(`${who}は打てる場所が無いのでパス`);
+    setTimeout(step, 900);
+    render();
+    return;
+  }
+  if (isHuman(st)) {
+    if (!/パス|AI:|待った/.test($('msg').textContent)) say(`${st.blackToMove ? '黒' : '白'}の番です。点のある場所をタップ`);
+    render();
+    return;
+  }
+  think(false);
+}
+
+function think(isHint) {
+  thinking = ++reqId;
+  worker.postMessage({ type: 'search', id: thinking, board: split(me(st), op(st)), ms: +$('time').value, hint: isHint });
+  pending = isHint;
+  say(isHint ? 'ヒントを考え中…' : 'AI が考え中…');
+  render();
+}
+let pending = false;
+
+function onResult({ data }) {
+  if (data.id !== thinking) return;   // result of a search that was cancelled (new game / undo)
+  thinking = 0;
+  const ev = data.discs, side = st.blackToMove ? '黒' : '白';
+  $('info').textContent = `AI の読み：${side}から見て ${ev > 0 ? '+' : ''}${ev} 石${data.exact ? '（完全読み）' : ''}　深さ ${data.depth}　${(data.nodes / 1e6).toFixed(1)}M 局面 / ${(data.ms / 1000).toFixed(1)} 秒`;
+  if (pending) {
+    hintSq = data.move;
+    say(`おすすめは ${name(data.move)}（黄色の枠）`);
+    render();
+    return;
+  }
+  play(data.move);
+  say(`AI: ${side}が ${name(data.move)} に打ちました`);
+  render();
+  setTimeout(step, 250);
+}
+
+function newGame() {
+  const m = $('mode').value;
+  humanK = m === 'b' || m === '2';
+  humanW = m === 'w' || m === '2';
+  $('nameK').textContent = '黒' + (m === '2' ? '' : humanK ? '（あなた）' : '（AI）');
+  $('nameW').textContent = '白' + (m === '2' ? '' : humanW ? '（あなた）' : '（AI）');
+  st = { k: (1n << 35n) | (1n << 28n), w: (1n << 27n) | (1n << 36n), blackToMove: true };
+  hist = []; hintSq = -1; lastSq = -1; $('info').textContent = '';
+  if (thinking) { thinking = 0; mkWorker(); }
+  worker.postMessage({ type: 'new' });
+  say('');
+  step();
+}
+
+function undo() {
+  if (thinking) { thinking = 0; mkWorker(); }
+  // back to the previous position where a human was to move
+  while (hist.length) {
+    const h = hist.pop();
+    lastSq = h.lastSq;
+    st = { k: h.k, w: h.w, blackToMove: h.blackToMove };
+    if (isHuman(st) && moves(me(st), op(st))) break;
+  }
+  hintSq = -1;
+  say('待った：1手戻しました');
+  step();
+}
+
+const cells = [];
+function buildBoard() {
+  const b = $('board');
+  b.appendChild(document.createElement('div'));
+  for (let c = 0; c < 8; c++) { const d = document.createElement('div'); d.className = 'lab'; d.textContent = 'abcdefgh'[c]; b.appendChild(d); }
+  for (let r = 0; r < 8; r++) {
+    const l = document.createElement('div'); l.className = 'lab'; l.textContent = r + 1; b.appendChild(l);
+    for (let c = 0; c < 8; c++) {
+      const sq = r * 8 + c, d = document.createElement('div');
+      d.className = 'sq'; d.appendChild(document.createElement('div'));
+      d.onclick = () => {
+        if (thinking || !isHuman(st) || over(st)) return;
+        if (!(moves(me(st), op(st)) >> BigInt(sq) & 1n)) return;
+        play(sq);
+        say(`${st.blackToMove ? '白' : '黒'}が ${name(sq)} に打ちました`);
+        render();
+        setTimeout(step, 150);
+      };
+      cells[sq] = d; b.appendChild(d);
+    }
+  }
+}
+
+$('new').onclick = newGame;
+$('undo').onclick = undo;
+$('hint').onclick = () => think(true);
+$('mode').onchange = newGame;
+
+buildBoard();
+WebAssembly.instantiateStreaming(fetch('othello.wasm'), { env: { millis: () => 0 } })
+  .then(({ instance }) => { rules = instance.exports; rules._initialize(); mkWorker(); newGame(); })
+  .catch(() => say('読み込みに失敗しました。http(s) で開いてください（ファイルを直接開くと動きません）。'));
+</script>
+</body>
+</html>
