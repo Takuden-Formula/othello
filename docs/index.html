@@ -26,6 +26,7 @@ button.primary{background:var(--ac);border-color:var(--ac);color:#fff;font-weigh
 .lab{display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--mut)}
 .sq{background:var(--cell);border:1px solid #145c39;display:flex;align-items:center;justify-content:center;position:relative;cursor:default}
 .sq.can{cursor:pointer}
+.sq,button{touch-action:manipulation}
 .sq.can::after{content:"";width:22%;height:22%;border-radius:50%;background:rgba(0,0,0,.28)}
 .sq.hint{box-shadow:inset 0 0 0 4px #ffd34d}
 .sq .st{width:84%;height:84%;border-radius:50%;transition:background .25s}
@@ -75,17 +76,20 @@ summary{cursor:pointer}
 </div>
 <script>
 const $ = id => document.getElementById(id);
+const WASM = 'othello.wasm?v=1';   // raise v when othello.wasm changes (GitHub Pages caches ~10 min)
 const FULL = (1n << 64n) - 1n;
 const split = (p, o) => [Number(p & 0xffffffffn), Number(p >> 32n), Number(o & 0xffffffffn), Number(o >> 32n)];
 const name = sq => 'abcdefgh'[sq & 7] + ((sq >> 3) + 1);
 
-let rules = null;              // main-thread engine instance (move generation only)
+let rules = null;
+let stepTimer = 0;               // pending step(); only one may be scheduled at a time
+const later = ms => { clearTimeout(stepTimer); stepTimer = setTimeout(step, ms); };              // main-thread engine instance (move generation only)
 let worker = null;
 let st, hist, humanK, humanW, thinking = 0, reqId = 0, hintSq = -1, lastSq = -1;
 
 function mkWorker() {
   if (worker) worker.terminate();
-  worker = new Worker('worker.js');
+  worker = new Worker('worker.js?v=1');
   worker.onmessage = onResult;
   worker.onerror = () => say('AI の読み込みに失敗しました。ページを再読み込みしてください。');
 }
@@ -147,7 +151,7 @@ function step() {
     const who = st.blackToMove ? '黒' : '白';
     play(-1);
     say(`${who}は打てる場所が無いのでパス`);
-    setTimeout(step, 900);
+    later(900);
     render();
     return;
   }
@@ -169,10 +173,11 @@ function think(isHint) {
 let pending = false;
 
 function onResult({ data }) {
+  if (data.type === 'error') { say('AI の読み込みに失敗しました。ページを再読み込みしてください。'); $('info').textContent = data.msg; return; }
   if (data.id !== thinking) return;   // result of a search that was cancelled (new game / undo)
   thinking = 0;
   const ev = data.discs, side = st.blackToMove ? '黒' : '白';
-  $('info').textContent = `AI の読み：${side}から見て ${ev > 0 ? '+' : ''}${ev} 石${data.exact ? '（完全読み）' : ''}　深さ ${data.depth}　${(data.nodes / 1e6).toFixed(1)}M 局面 / ${(data.ms / 1000).toFixed(1)} 秒`;
+  $('info').textContent = data.depth === 0 ? '打てる手は1つだけ' : `AI の読み：${side}から見て ${ev > 0 ? '+' : ''}${ev} 石${data.exact ? '（完全読み）' : ''}　深さ ${data.depth}　${(data.nodes / 1e6).toFixed(1)}M 局面 / ${(data.ms / 1000).toFixed(1)} 秒`;
   if (pending) {
     hintSq = data.move;
     say(`おすすめは ${name(data.move)}（黄色の枠）`);
@@ -182,7 +187,7 @@ function onResult({ data }) {
   play(data.move);
   say(`AI: ${side}が ${name(data.move)} に打ちました`);
   render();
-  setTimeout(step, 250);
+  later(250);
 }
 
 function newGame() {
@@ -192,6 +197,7 @@ function newGame() {
   $('nameK').textContent = '黒' + (m === '2' ? '' : humanK ? '（あなた）' : '（AI）');
   $('nameW').textContent = '白' + (m === '2' ? '' : humanW ? '（あなた）' : '（AI）');
   st = { k: (1n << 35n) | (1n << 28n), w: (1n << 27n) | (1n << 36n), blackToMove: true };
+  clearTimeout(stepTimer);
   hist = []; hintSq = -1; lastSq = -1; $('info').textContent = '';
   if (thinking) { thinking = 0; mkWorker(); }
   worker.postMessage({ type: 'new' });
@@ -200,6 +206,7 @@ function newGame() {
 }
 
 function undo() {
+  clearTimeout(stepTimer);
   if (thinking) { thinking = 0; mkWorker(); }
   // back to the previous position where a human was to move
   while (hist.length) {
@@ -209,7 +216,8 @@ function undo() {
     if (isHuman(st) && moves(me(st), op(st))) break;
   }
   hintSq = -1;
-  say('待った：1手戻しました');
+  say('待った：あなたの前の手番に戻しました');
+  $('info').textContent = '';
   step();
 }
 
@@ -229,7 +237,7 @@ function buildBoard() {
         play(sq);
         say(`${st.blackToMove ? '白' : '黒'}が ${name(sq)} に打ちました`);
         render();
-        setTimeout(step, 150);
+        later(150);
       };
       cells[sq] = d; b.appendChild(d);
     }
@@ -242,9 +250,12 @@ $('hint').onclick = () => think(true);
 $('mode').onchange = newGame;
 
 buildBoard();
-WebAssembly.instantiateStreaming(fetch('othello.wasm'), { env: { millis: () => 0 } })
+fetch(WASM).then(r => r.arrayBuffer()).then(buf => WebAssembly.instantiate(buf, { env: { millis: () => 0 } }))
   .then(({ instance }) => { rules = instance.exports; rules._initialize(); mkWorker(); newGame(); })
-  .catch(() => say('読み込みに失敗しました。http(s) で開いてください（ファイルを直接開くと動きません）。'));
+  .catch(e => {
+    say('読み込みに失敗しました。ページを再読み込みしてください（ファイルを直接開いた場合は http(s) で開く。iPhone は iOS 15 以上）。');
+    $('info').textContent = String(e);
+  });
 </script>
 </body>
 </html>
