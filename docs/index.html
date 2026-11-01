@@ -2,99 +2,306 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f9d76">
 <title>オセロ（最強AI）</title>
 <style>
-:root{--bg:#eef2f5;--panel:#fff;--line:#d6dee6;--tx:#1b2a3a;--mut:#6b7c8f;--board:#1f7a4d;--cell:#23874f;--ac:#0f9d76}
+:root{--bg:#eef2f5;--panel:#fff;--line:#d6dee6;--tx:#1b2a3a;--mut:#5f7084;--board:#1f7a4d;--cell:#23874f;--ac:#0f9d76;--ng:#d0453f;--gold:#e8a400;
+  --blk:radial-gradient(circle at 35% 30%,#555,#000 70%);--wht:radial-gradient(circle at 35% 30%,#fff,#d8d8d8 75%)}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif}
-#app{max-width:560px;margin:0 auto;padding:12px 16px 28px}
-h1{font-size:20px;margin:6px 0 10px;letter-spacing:.05em}
-.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
-label{font-size:14px;color:var(--mut)}
-select,button{font:inherit;font-size:15px;color:var(--tx);background:#fff;border:1px solid #c6d2de;border-radius:10px;padding:8px 12px;min-height:42px}
-button{cursor:pointer}
-button:disabled{opacity:.45;cursor:not-allowed}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--tx);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",sans-serif;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+body[data-mode=idle],body[data-mode=result]{cursor:pointer}
+button,select,input{font:inherit;color:var(--tx)}
+button,.sq{touch-action:manipulation}
+button{cursor:pointer;background:#fff;border:2px solid #c6d2de;border-radius:14px;padding:10px 16px;min-height:52px;font-size:inherit}
+button:disabled{opacity:.4;cursor:not-allowed}
 button.primary{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:700}
-#score{display:flex;gap:10px;margin:10px 0}
-.side{flex:1;display:flex;align-items:center;gap:10px;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:8px 12px;font-size:15px}
-.side.turn{border-color:var(--ac)}
-.side b{font-size:24px;margin-left:auto}
-.disc{width:22px;height:22px;border-radius:50%;flex:none}
-.disc.k{background:#111}.disc.w{background:#fafafa;border:1px solid #999}
-#board{display:grid;grid-template-columns:20px repeat(8,1fr);grid-template-rows:20px repeat(8,1fr);gap:0;width:min(100%,max(300px,100vh - 250px));margin:0 auto;aspect-ratio:1;user-select:none;-webkit-user-select:none}
-.lab{display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--mut)}
+button.big{font-size:clamp(22px,2.3vw,32px);min-height:72px;border-radius:18px;font-weight:700}
+
+/* 横長（PC・iPad 横）は盤面が左、説明が右。縦長（iPad 縦・スマホ）は盤面が上 */
+#app{height:100vh;display:grid;gap:18px;padding:12px 16px 36px;justify-content:center;align-items:start;
+  --bs:min(calc(100vh - 50px),60vw);grid-template-columns:var(--bs) minmax(300px,600px)}
+@supports (height:100dvh){#app{height:100dvh;--bs:min(calc(100dvh - 50px),60vw)}}
+.panel{height:var(--bs);overflow-y:auto;display:flex;flex-direction:column;gap:12px;font-size:clamp(16px,1.25vw + 6px,24px);-webkit-overflow-scrolling:touch}
+@media (max-aspect-ratio:5/4){
+  body{overflow-y:auto}
+  #app{height:auto;min-height:100vh;grid-template-columns:minmax(0,var(--bs));justify-items:center;--bs:min(calc(100vw - 32px),calc(100vh - 400px))}
+  @supports (height:100dvh){#app{height:auto;--bs:min(calc(100vw - 32px),calc(100dvh - 400px))}}
+  .panel{height:auto;width:var(--bs);min-width:min(100%,300px);font-size:clamp(16px,2.4vw,24px)}
+}
+
+#boardWrap{position:relative;width:var(--bs);height:var(--bs)}
+#board{display:grid;grid-template-columns:22px repeat(8,1fr);grid-template-rows:22px repeat(8,1fr);width:100%;height:100%}
+.lab{display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--mut)}
 .sq{background:var(--cell);border:1px solid #145c39;display:flex;align-items:center;justify-content:center;position:relative;cursor:default}
 .sq.can{cursor:pointer}
-.sq,button{touch-action:manipulation}
-.sq.can::after{content:"";width:22%;height:22%;border-radius:50%;background:rgba(0,0,0,.28)}
-.sq.hint{box-shadow:inset 0 0 0 4px #ffd34d}
-.sq .st{width:84%;height:84%;border-radius:50%;transition:background .25s}
-.sq .st.k{background:radial-gradient(circle at 35% 30%,#555,#000 70%)}
-.sq .st.w{background:radial-gradient(circle at 35% 30%,#fff,#d8d8d8 75%)}
-.sq.last .st::after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:#e0484d}
-#msg{min-height:46px;margin:10px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ac);border-radius:10px;font-size:15px;line-height:1.5}
+.sq.can::after{content:"";width:24%;height:24%;border-radius:50%;background:rgba(0,0,0,.28)}
+.sq.can:active{background:#2a9a5b}
+.sq.hint{box-shadow:inset 0 0 0 5px #ffd34d;animation:glow 1s ease-in-out infinite alternate}
+@keyframes glow{to{box-shadow:inset 0 0 0 5px #fff3b0}}
+.sq .st{width:84%;height:84%;border-radius:50%;box-shadow:0 2px 3px rgba(0,0,0,.35)}
+.sq .st.k{background:var(--blk)}
+.sq .st.w{background:var(--wht)}
+/* 置いた石はポンと出て、はさんだ石は横に回ってひっくり返る（遅れは JS が石ごとに付ける） */
+.sq .st.pl{animation:pop .28s ease-out both}
+@keyframes pop{from{transform:scale(.3);opacity:.3}to{transform:scale(1);opacity:1}}
+.sq .st.k.fl{animation:toK .36s ease-in-out both}
+.sq .st.w.fl{animation:toW .36s ease-in-out both}
+@keyframes toK{0%{transform:scaleX(1);background:var(--wht)}49.9%{transform:scaleX(.03);background:var(--wht)}50%{transform:scaleX(.03);background:var(--blk)}100%{transform:scaleX(1);background:var(--blk)}}
+@keyframes toW{0%{transform:scaleX(1);background:var(--blk)}49.9%{transform:scaleX(.03);background:var(--blk)}50%{transform:scaleX(.03);background:var(--wht)}100%{transform:scaleX(1);background:var(--wht)}}
+.sq.last .st::after{content:"";position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:#e0484d}
+#banner{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:max-content;max-width:88%;background:rgba(8,40,28,.82);color:#fff;
+  border-radius:20px;padding:18px 30px;text-align:center;pointer-events:none;display:none;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+#banner b{display:block;font-size:clamp(26px,4vw,56px);letter-spacing:.04em}
+#banner small{display:block;font-size:clamp(14px,1.5vw,20px);opacity:.85;margin-top:4px}
+body[data-mode=idle] #banner,body[data-mode=result] #banner{display:block}
+body[data-mode=idle] #banner b{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+
+/* 画面ごとの右側（下側）の中身 */
+.pane{display:none;flex-direction:column;gap:12px}
+body[data-mode=idle] #pIdle,body[data-mode=select] #pSelect,body[data-mode=play] #pPlay,body[data-mode=result] #pResult{display:flex}
+body[data-mode=play] #score,body[data-mode=result] #score,body[data-mode=idle] #score{display:flex}
+h1{margin:0;font-size:clamp(36px,4.2vw,64px);letter-spacing:.06em;color:var(--ac);line-height:1.1}
+h1 small{display:block;font-size:.45em;color:var(--tx);letter-spacing:.02em;margin-top:6px}
+h2{margin:4px 0 0;font-size:1.25em}
+.lead{margin:0;line-height:1.6}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 16px}
+.card h3{margin:0 0 6px;font-size:1em;color:var(--ac)}
+.rank{margin:0;padding:0;list-style:none;counter-reset:r}
+.rank li{counter-increment:r;display:flex;gap:10px;align-items:baseline;padding:3px 4px;border-bottom:1px dashed var(--line)}
+.rank li:last-child{border-bottom:0}
+.rank li::before{content:counter(r) "位";min-width:2.6em;font-weight:700;color:var(--mut)}
+.rank li:nth-child(1)::before{color:var(--gold)}
+.rank.one li::before{content:""; min-width:0}
+.rank li.me{background:#fff4c9;border-radius:8px}
+.rank b{min-width:2.8em;text-align:right;font-size:1.15em}
+.rank .lv{font-weight:700}
+.rank .sub{color:var(--mut);font-size:.8em;margin-left:auto}
+.empty{color:var(--mut);font-size:.9em}
+.mut{color:var(--mut);font-size:.8em;line-height:1.6}
+#score{display:none;gap:10px}
+.side{flex:1;display:flex;align-items:center;gap:10px;background:var(--panel);border:3px solid var(--line);border-radius:14px;padding:8px 14px;font-size:1em}
+.side.turn{border-color:var(--ac);box-shadow:0 0 0 3px rgba(15,157,118,.18)}
+.side b{font-size:1.8em;margin-left:auto}
+.side span:nth-child(2){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body[data-mode=result] #banner{top:14%}
+.disc{width:1.3em;height:1.3em;border-radius:50%;flex:none;display:inline-block;vertical-align:-.2em}
+.disc.k{background:#111}.disc.w{background:#fafafa;border:1px solid #999}
+#msg{min-height:2.6em;padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--ac);border-radius:12px;line-height:1.5;font-weight:700}
 #info{font-size:13px;color:var(--mut);min-height:20px}
-details{margin-top:14px;font-size:14px;color:var(--mut);line-height:1.7}
-summary{cursor:pointer}
+.btns{display:flex;flex-wrap:wrap;gap:10px}
+.btns button{flex:1;white-space:nowrap;padding:10px 8px;font-size:.9em;min-height:60px}
+.seg{display:flex;gap:10px}
+.seg button{flex:1;font-weight:700}
+.seg button.on{border-color:var(--ac);background:#e3f6f0;box-shadow:inset 0 0 0 2px var(--ac)}
+.lvs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lvs button{display:flex;flex-direction:column;align-items:center;gap:2px;min-height:96px;padding:10px}
+.lvs button b{font-size:1.35em}
+.lvs button span{font-size:.75em;color:var(--mut)}
+.lvs button i{font-style:normal;color:var(--gold);letter-spacing:.1em}
+.lvs button.def{border-color:var(--ac)}
+#resTitle{font-size:clamp(34px,4vw,60px);font-weight:800;margin:0;line-height:1.15}
+#resTitle.win{color:var(--ac)}#resTitle.lose{color:var(--ng)}
+#resGrade{display:inline-flex;align-items:center;justify-content:center;width:1.7em;height:1.7em;border-radius:50%;background:var(--gold);color:#fff;font-weight:800;font-size:1.6em;margin-right:10px;vertical-align:middle}
+#resLine{font-size:1.3em;font-weight:700}
+#resRank{font-weight:700;color:#b06d00}
+
+#gear{position:fixed;z-index:4;top:10px;right:12px;background:rgba(255,255,255,.7);border:1px solid #c6d2de;border-radius:10px;font-size:24px;
+  min-height:0;padding:2px 10px;opacity:.55;touch-action:none}
+#gear.hold{opacity:1;background:var(--ac);color:#fff;transition:background 1s linear}
+#fsHint{position:fixed;z-index:5;top:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.72);color:#fff;font-size:22px;font-weight:bold;
+  padding:10px 24px;border-radius:12px;display:none;pointer-events:none;text-align:center}
+#status{position:fixed;z-index:2;left:50%;transform:translateX(-50%);bottom:6px;font-size:14px;color:var(--mut);background:rgba(255,255,255,.75);
+  padding:2px 12px;border-radius:8px;white-space:nowrap;max-width:96vw;overflow:hidden;text-overflow:ellipsis}
+#status .ok{color:var(--ac)}#status .ng{color:var(--ng)}
+#settings{position:fixed;top:0;right:0;height:100%;width:480px;max-width:100%;background:#fff;z-index:10;border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.15);
+  padding:18px 18px 40px;overflow-y:auto;display:none;font-size:17px;cursor:auto;-webkit-user-select:text;user-select:text}
+#settings.show{display:block}
+#settings h2{margin:0 0 6px;font-size:22px}
+#settings label{display:block;margin:14px 0 4px;font-weight:700}
+#settings label.chk{font-weight:400}
+#settings select,#settings input[type=number]{width:100%;padding:8px 10px;min-height:44px;border:1px solid #c6d2de;border-radius:10px;background:#fff}
+#settings input[type=range]{width:100%}
+#settings button{min-height:44px;margin:4px 4px 0 0}
+#settings .note{color:var(--mut);font-size:14px;line-height:1.6;margin-top:4px}
+#settings .close{position:sticky;top:0;float:right}
+#fileErr{display:none;position:fixed;inset:0;z-index:20;background:var(--bg);padding:40px;font-size:24px;line-height:1.7}
 </style>
 </head>
-<body>
+<body data-mode="idle">
 <div id="app">
-  <h1>オセロ（最強AI）</h1>
-  <div class="row">
-    <label>対戦<select id="mode">
-      <option value="b">自分が黒（先手）</option>
-      <option value="w">自分が白（後手）</option>
-      <option value="2">ふたりで対戦</option>
-      <option value="ai">AI どうし</option>
-    </select></label>
-    <label>AIの考える時間<select id="time">
-      <option value="1000">1 秒（弱め）</option>
-      <option value="3000" selected>3 秒</option>
-      <option value="10000">10 秒（最強）</option>
-    </select></label>
+  <div id="boardWrap">
+    <div id="board"></div>
+    <div id="banner"><b id="banB">読み込み中…</b><small id="banS"></small></div>
   </div>
-  <div class="row">
-    <button id="new" class="primary">新しいゲーム</button>
-    <button id="undo">待った</button>
-    <button id="hint">ヒント</button>
+  <div class="panel">
+    <div id="score">
+      <div class="side" id="sideK"><span class="disc k"></span><span id="nameK">黒</span><b id="cntK">2</b></div>
+      <div class="side" id="sideW"><span class="disc w"></span><span id="nameW">白</span><b id="cntW">2</b></div>
+    </div>
+
+    <!-- 待機（タイトル） -->
+    <div class="pane" id="pIdle">
+      <h1>オセロ<small>最強AIに挑戦！</small></h1>
+      <p class="lead">相手の石を自分の石ではさむと、ひっくり返せます。最後に<b>石が多い方の勝ち</b>！</p>
+      <button class="big primary" id="btnStart">タップ／クリック／Enter で始める</button>
+      <div class="card"><h3>本日のランキング（AIに勝った人）</h3><ol class="rank" id="rankToday"></ol></div>
+      <div class="card"><h3>これまでの最高</h3><div id="bestEver" class="empty">まだいません</div></div>
+      <div class="mut" id="todayCount"></div>
+      <div class="mut">ランキングは「強い AI に勝った順 → 石差が大きい順」。AI は C 言語で作ったオセロ AI をブラウザで動かしています（ビットボード＋αβ探索。終盤は最後まで読み切ります）。</div>
+    </div>
+
+    <!-- 強さと手番を選ぶ -->
+    <div class="pane" id="pSelect">
+      <h2 id="selHead">あなたの石をえらんでね</h2>
+      <div class="seg" id="sideSeg">
+        <button data-side="b"><span class="disc k"></span> 黒（先に打つ）</button>
+        <button data-side="w"><span class="disc w"></span> 白（あとに打つ）</button>
+      </div>
+      <h2 id="lvHead">AIの強さをえらんでね</h2>
+      <div class="lvs" id="lvBtns">
+        <button data-lv="1"><b>やさしい</b><i>★</i><span>はじめての人に</span></button>
+        <button data-lv="2"><b>ふつう</b><i>★★</i><span>少し考えて打つ</span></button>
+        <button data-lv="3"><b>つよい</b><i>★★★</i><span>かなり強い</span></button>
+        <button data-lv="4"><b>最強</b><i>★★★★</i><span>本気。終盤は読み切り</span></button>
+      </div>
+      <button class="big primary" id="btnGo">はじめる</button>
+      <div class="btns"><button id="btnTwo">ふたりで対戦</button><button id="btnBack">もどる</button></div>
+    </div>
+
+    <!-- 対局中 -->
+    <div class="pane" id="pPlay">
+      <div id="msg">読み込み中…</div>
+      <div class="btns">
+        <button id="undo">待った</button>
+        <button id="hint">ヒント</button>
+        <button id="quit">やめる</button>
+      </div>
+      <div id="info"></div>
+      <div class="mut" id="playNote"></div>
+    </div>
+
+    <!-- 結果 -->
+    <div class="pane" id="pResult">
+      <p id="resTitle"></p>
+      <div><span id="resGrade"></span><span id="resLine"></span></div>
+      <div id="resEval"></div>
+      <div id="resRank"></div>
+      <div class="card" id="resRankCard"><h3>本日のランキング</h3><ol class="rank" id="rankRes"></ol></div>
+      <button class="big primary" id="btnBackIdle">タップでもどる</button>
+      <div class="mut" id="resBack"></div>
+    </div>
   </div>
-  <div id="score">
-    <div class="side" id="sideK"><span class="disc k"></span><span id="nameK">黒</span><b id="cntK">2</b></div>
-    <div class="side" id="sideW"><span class="disc w"></span><span id="nameW">白</span><b id="cntW">2</b></div>
-  </div>
-  <div id="board"></div>
-  <div id="msg">読み込み中…</div>
-  <div id="info"></div>
-  <details>
-    <summary>遊び方・AI のしくみ</summary>
-    黒から交互に打ちます。相手の石をはさめる場所（小さな点）にだけ打てます。打てる場所が無いときは自動でパスになります。<br>
-    「待った」で自分の前の手に戻り、「ヒント」で AI のおすすめの手が黄色く光ります。<br>
-    AI はビットボード＋αβ探索（PVS）＋置換表で読み、終盤は最後まで読み切って最善手を打ちます（「完全読み」と表示）。考える時間が長いほど強くなります。
-  </details>
 </div>
+
+<button id="gear" title="設定（S キー。タッチ端末は長押し 1 秒）">⚙</button>
+<div id="fsHint">画面をタップ／クリックすると全画面になります（Esc で解除 ・ F で再び全画面）</div>
+<div id="status"><span id="stAi">AI: 読み込み中…</span> ・ <span id="stRec"></span> ・ <span id="stStats"></span></div>
+
+<div id="settings">
+  <button class="close" id="btnClose">閉じる</button>
+  <h2>設定（S キーで開閉）</h2>
+  <label>AI の強さ</label>
+  <label class="chk"><input type="checkbox" id="setAskLevel"> お客さんが強さを選ぶ（OFF にすると下の強さで始まる）</label>
+  <select id="setLevel"><option value="1">やさしい</option><option value="2">ふつう</option><option value="3">つよい</option><option value="4">最強</option></select>
+  <div class="note">やさしい＝6 割は気まぐれな手・0.1 秒読む、ふつう＝2.5 割は気まぐれ・0.3 秒読む、つよい＝毎手 1 秒読む、最強＝下の時間だけ読む。</div>
+  <label>「最強」の考える時間（1 手あたり）</label>
+  <select id="setMaxMs"><option value="1000">1 秒</option><option value="3000">3 秒</option><option value="5000">5 秒</option><option value="10000">10 秒（いちばん強い）</option></select>
+  <label>お客さんの手番の既定</label>
+  <select id="setSide"><option value="ask">お客さんが選ぶ（最初は黒）</option><option value="b">黒（先手）に決める</option><option value="w">白（後手）に決める</option></select>
+  <label>ヒントの回数（1局あたり）</label>
+  <select id="setHints"><option value="0">使えない</option><option value="1">1 回</option><option value="3">3 回</option><option value="5">5 回</option><option value="-1">何回でも</option></select>
+  <label>待ったの回数（1局あたり）</label>
+  <select id="setUndos"><option value="0">使えない</option><option value="1">1 回</option><option value="3">3 回</option><option value="-1">何回でも</option></select>
+  <label>放置で待機画面に戻るまで [秒]</label>
+  <input type="number" id="setIdle" min="10" max="900" step="5">
+  <label>結果を出しておく時間 [秒]（過ぎると待機画面へ）</label>
+  <input type="number" id="setResult" min="5" max="120" step="1">
+  <label class="chk"><input type="checkbox" id="setSound"> 効果音</label>
+  <label>音量: <b id="volVal"></b></label>
+  <input type="range" id="setVol" min="0" max="100" step="5">
+  <button id="btnSoundTest">音を鳴らしてみる</button>
+
+  <label>記録を保存するフォルダ</label>
+  <div class="note">フォルダ: <b id="recName">未設定</b> <span id="recState"></span></div>
+  <button id="btnRecPick">フォルダを選ぶ</button>
+  <button id="btnRecLoad">記録を読み込み直す</button>
+  <button id="btnCsv">records.csv を書き出す</button>
+  <div class="note">選んだフォルダに records.csv を作り、1局ごとに1行足します（Excel で開けます）。起動時にそこから本日のランキングと集計を読み込みます。<br>
+    ブラウザを開き直したあとは、最初に画面をクリックしたときに「フォルダの編集を許可」と聞かれるので「許可」を押してください。<br>
+    フォルダを選べないブラウザ（Safari・iPad など）や、フォルダを選んでいないときは、記録はブラウザの中に残ります。「records.csv を書き出す」でダウンロードできます。</div>
+
+  <label>集計</label>
+  <div id="statsDetail" class="note"></div>
+  <button id="btnReset">集計とランキングをリセット</button>
+  <div class="note">records.csv は消しません（リセットした時刻より前の行を集計に使わなくなるだけです）。</div>
+
+  <label>そのほか</label>
+  <button id="btnWatch">AI どうしの対局を見る（最強どうし）</button>
+  <div class="note" style="margin-top:14px">
+    キー操作: Enter = 始める・結果から戻る / 1〜4 = 強さを選んで始める / ← → = 黒・白 / H = ヒント / Z = 待った / S = 設定 / F = 全画面 / Esc = 全画面解除・設定を閉じる
+  </div>
+</div>
+
+<div id="fileErr">index.html を直接開いても動きません。<br>フォルダ内の「<b>起動.bat</b>」（Mac は「<b>起動_Mac.command</b>」）をダブルクリックしてください。<br>
+  <small>インターネットにつながっていれば https://takuden-formula.github.io/othello/ でも遊べます。</small></div>
 <script>
+// ファイルを直接開いたとき（file://）は、ゲームの部品（WebAssembly とモジュール）を読めないので案内だけ出す
+if (location.protocol === 'file:') document.getElementById('fileErr').style.display = 'block';
+</script>
+
+<script type="module">
+import { Records } from './records.js?v=1';
+import { Sfx } from './sound.js?v=1';
+
 const $ = id => document.getElementById(id);
 const WASM = 'othello.wasm?v=1';   // raise v when othello.wasm changes (GitHub Pages caches ~10 min)
 const FULL = (1n << 64n) - 1n;
 const split = (p, o) => [Number(p & 0xffffffffn), Number(p >> 32n), Number(o & 0xffffffffn), Number(o >> 32n)];
 const name = sq => 'abcdefgh'[sq & 7] + ((sq >> 3) + 1);
+const LV = ['', 'やさしい', 'ふつう', 'つよい', '最強'];
+const DEMO_MS = 150;              // 待機中のデモ（AI どうし）の 1 手の考える時間
 
-let rules = null;
-let stepTimer = 0;               // pending step(); only one may be scheduled at a time
-const later = ms => { clearTimeout(stepTimer); stepTimer = setTimeout(step, ms); };              // main-thread engine instance (move generation only)
+// ---------- 設定（ブラウザに保存） ----------
+const SKEY = 'othello-settings';
+const DEF = { askLevel: true, level: 2, maxMs: 3000, side: 'ask', hints: 3, undos: 1, idleSec: 60, resultSec: 15, sound: true, vol: 70, resetAt: '' };
+const settings = Object.assign({}, DEF, (() => { try { return JSON.parse(localStorage.getItem(SKEY)) || {}; } catch { return {}; } })());
+const saveSettings = () => { try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch {} };
+// 強さごとの考える時間 [ms] と、気まぐれな手（ランダム）を打つ確率
+const aiMs = lv => [0, 100, 300, 1000, settings.maxMs][lv];
+const aiRand = lv => [0, 0.6, 0.25, 0, 0][lv];
+
+const sfx = new Sfx();
+const records = new Records();
+
+// ---------- 盤面とエンジン ----------
+let rules = null;                // main-thread engine instance (move generation only)
 let worker = null;
-let st, hist, humanK, humanW, thinking = 0, reqId = 0, hintSq = -1, lastSq = -1;
+let stepTimer = 0, aiTimer = 0, demoTimer = 0;
+const later = ms => { clearTimeout(stepTimer); stepTimer = setTimeout(step, ms); };   // only one step() may be scheduled at a time
+let st, hist, thinking = 0, reqId = 0, hintSq = -1, lastSq = -1, pending = false, thinkAt = 0, anim = {}, note = '';
+let mode = 'idle', game = { demo: true, humanK: false, humanW: false, level: 2 };
+let selSide = 'b', resultAt = 0, modeAt = 0, lastInput = performance.now(), quitArm = 0, hl = null;
 
 function mkWorker() {
   if (worker) worker.terminate();
   worker = new Worker('worker.js?v=1');
   worker.onmessage = onResult;
-  worker.onerror = () => say('AI の読み込みに失敗しました。ページを再読み込みしてください。');
+  worker.onerror = () => aiError('');
+}
+function aiError(msg) {
+  say('AI の読み込みに失敗しました。ページを再読み込みしてください。');
+  $('stAi').textContent = 'AI: 読み込み失敗'; $('stAi').className = 'ng';
+  $('info').textContent = msg;
 }
 
 function moves(p, o) {
+  if (!rules) return 0n;   // まだ読み込み中
   rules.moves(...split(p, o));
   return BigInt(rules.ret_hi() >>> 0) << 32n | BigInt(rules.ret_lo() >>> 0);
 }
@@ -103,60 +310,87 @@ function flips(p, o, sq) {
   return BigInt(rules.ret_hi() >>> 0) << 32n | BigInt(rules.ret_lo() >>> 0);
 }
 const cnt = x => { let n = 0; while (x) { x &= x - 1n; n++; } return n; };
+const bits = x => { const a = []; for (let s = 0; s < 64; s++) if (x >> BigInt(s) & 1n) a.push(s); return a; };
 // side to move / opponent
 const me = s => s.blackToMove ? s.k : s.w;
 const op = s => s.blackToMove ? s.w : s.k;
-const isHuman = s => s.blackToMove ? humanK : humanW;
+const isHuman = s => s.blackToMove ? game.humanK : game.humanW;
 const over = s => !moves(me(s), op(s)) && !moves(op(s), me(s));
+const vsAI = () => !game.demo && !game.watch && game.humanK !== game.humanW;
+const initial = () => ({ k: (1n << 35n) | (1n << 28n), w: (1n << 27n) | (1n << 36n), blackToMove: true });
+const sideName = black => vsAI() ? ((black ? game.humanK : game.humanW) ? 'あなた' : 'AI') : (black ? '黒' : '白');
 
 function play(sq) {
   hist.push({ ...st, lastSq });
+  let f = 0n;
   if (sq >= 0) {
-    const f = flips(me(st), op(st), sq), bit = 1n << BigInt(sq);
+    f = flips(me(st), op(st), sq); const bit = 1n << BigInt(sq);
     if (st.blackToMove) { st.k |= f | bit; st.w &= ~f & FULL; }
     else { st.w |= f | bit; st.k &= ~f & FULL; }
   }
   st.blackToMove = !st.blackToMove;
   lastSq = sq >= 0 ? sq : lastSq;
   hintSq = -1;
+  return f;
+}
+// 石を置いて、ひっくり返るアニメーションと音を付ける。戻り値＝アニメーションが終わるまでの ms
+function doMove(sq) {
+  const f = play(sq), now = performance.now(), delays = [];
+  game.moves = (game.moves || 0) + 1;
+  anim = { [sq]: { cls: 'pl', delay: 0, until: now + 400 } };
+  for (const s of bits(f)) {
+    const d = (Math.max(Math.abs((s >> 3) - (sq >> 3)), Math.abs((s & 7) - (sq & 7))) - 1) * 0.07;   // 置いた所から近い順に返る
+    anim[s] = { cls: 'fl', delay: d, until: now + 500 + d * 1000 }; delays.push(d);
+  }
+  if (!game.demo) { sfx.place(); sfx.flip(delays.sort((a, b) => a - b)); }
+  render();
+  return 400 + Math.max(0, ...delays) * 1000;
 }
 
 function say(t) { $('msg').textContent = t; }
 
 function render() {
-  const can = isHuman(st) && !thinking ? moves(me(st), op(st)) : 0n;
+  const can = isHuman(st) && !thinking && mode === 'play' ? moves(me(st), op(st)) : 0n, now = performance.now();
   for (let sq = 0; sq < 64; sq++) {
-    const el = cells[sq], bit = 1n << BigInt(sq);
+    const el = cells[sq], bit = 1n << BigInt(sq), a = anim[sq];
     const c = st.k & bit ? 'k' : st.w & bit ? 'w' : '';
     el.className = 'sq' + (can & bit ? ' can' : '') + (sq === hintSq ? ' hint' : '') + (sq === lastSq ? ' last' : '');
-    el.firstChild.className = c ? 'st ' + c : '';
+    const live = c && a && now < a.until;
+    el.firstChild.className = c ? 'st ' + c + (live ? ' ' + a.cls : '') : '';
+    el.firstChild.style.animationDelay = live ? a.delay + 's' : '';
   }
   $('cntK').textContent = cnt(st.k);
   $('cntW').textContent = cnt(st.w);
-  $('sideK').classList.toggle('turn', st.blackToMove && !over(st));
-  $('sideW').classList.toggle('turn', !st.blackToMove && !over(st));
-  $('undo').disabled = !hist.some(h => (h.blackToMove ? humanK : humanW));
-  $('hint').disabled = !!thinking || !isHuman(st) || over(st);
+  const end = over(st);
+  $('sideK').classList.toggle('turn', st.blackToMove && !end);
+  $('sideW').classList.toggle('turn', !st.blackToMove && !end);
+  updateButtons();
+}
+const left = (lim, used) => lim < 0 ? Infinity : Math.max(0, lim - (used || 0));
+function updateButtons() {
+  const uLeft = left(settings.undos, game.undos), hLeft = left(settings.hints, game.hints);
+  $('undo').textContent = settings.undos < 0 ? '待った' : `待った（${uLeft}）`;
+  $('hint').textContent = settings.hints < 0 ? 'ヒント' : `ヒント（${hLeft}）`;
+  $('undo').style.display = settings.undos === 0 || game.watch ? 'none' : '';
+  $('hint').style.display = settings.hints === 0 || game.watch ? 'none' : '';
+  $('undo').disabled = mode !== 'play' || !uLeft || !hist.some(h => (h.blackToMove ? game.humanK : game.humanW));
+  $('hint').disabled = !!thinking || mode !== 'play' || over(st) || !isHuman(st) || !hLeft;
 }
 
 // Advances the game: handles passes, game end, and starts the AI when it is its turn.
 function step() {
-  if (over(st)) {
-    const k = cnt(st.k), w = cnt(st.w);
-    say(`終局　黒 ${k} − ${w} 白　→ ${k > w ? '黒の勝ち' : k < w ? '白の勝ち' : '引き分け'}${humanK !== humanW ? (k === w ? '' : (k > w) === humanK ? '！あなたの勝ち' : '。AI の勝ち') : ''}`);
-    render();
-    return;
-  }
+  if (over(st)) { finish(); return; }
   if (!moves(me(st), op(st))) {
-    const who = st.blackToMove ? '黒' : '白';
+    const who = sideName(st.blackToMove);
     play(-1);
-    say(`${who}は打てる場所が無いのでパス`);
-    later(900);
+    if (!game.demo) { note = `${who}は打てる場所が無いのでパス。`; say(note); sfx.pass(); }
     render();
+    later(game.demo ? 600 : 1400);
     return;
   }
   if (isHuman(st)) {
-    if (!/パス|AI:|待った/.test($('msg').textContent)) say(`${st.blackToMove ? '黒' : '白'}の番です。点のある場所をタップ`);
+    lastInput = performance.now();   // 放置の時間はお客さんの番になったときから数える
+    say(note + (vsAI() ? 'あなたの番です。点のある所をタップ' : `${st.blackToMove ? '黒' : '白'}の番です。点のある所をタップ`));
     render();
     return;
   }
@@ -164,63 +398,309 @@ function step() {
 }
 
 function think(isHint) {
-  thinking = ++reqId;
-  worker.postMessage({ type: 'search', id: thinking, board: split(me(st), op(st)), ms: +$('time').value, hint: isHint });
-  pending = isHint;
-  say(isHint ? 'ヒントを考え中…' : 'AI が考え中…');
+  const id = thinking = ++reqId;
+  pending = isHint; thinkAt = performance.now();
+  const r = game.demo ? (hist.length < 6 ? 1 : 0.08) : game.watch ? 0 : aiRand(game.level);   // デモは最初の数手をばらして毎回ちがう対局にする
+  if (!isHint && Math.random() < r) {
+    const list = bits(moves(me(st), op(st)));
+    const mv = list[Math.floor(Math.random() * list.length)];
+    aiTimer = setTimeout(() => onResult({ data: { id, move: mv, rand: true } }), 10);
+  } else {
+    const ms = isHint ? 1000 : game.demo ? DEMO_MS : game.watch ? settings.maxMs : aiMs(game.level);
+    worker.postMessage({ type: 'search', id, board: split(me(st), op(st)), ms });
+  }
+  if (!game.demo) say(isHint ? 'ヒントを考え中…' : `${vsAI() ? 'AI' : st.blackToMove ? '黒の AI' : '白の AI'}が考え中…`);
   render();
 }
-let pending = false;
 
 function onResult({ data }) {
-  if (data.type === 'error') { say('AI の読み込みに失敗しました。ページを再読み込みしてください。'); $('info').textContent = data.msg; return; }
+  if (data.type === 'error') { aiError(data.msg); return; }
   if (data.id !== thinking) return;   // result of a search that was cancelled (new game / undo)
+  // 速すぎると何が起きたか分からないので、AI の手は少し待ってから打つ
+  const wait = Math.max(0, (pending ? 0 : game.demo ? 350 : 700) - (performance.now() - thinkAt));
+  clearTimeout(aiTimer);
+  aiTimer = setTimeout(() => applyResult(data), wait);
+}
+function applyResult(data) {
+  if (data.id !== thinking) return;
   thinking = 0;
-  const ev = data.discs, side = st.blackToMove ? '黒' : '白';
-  $('info').textContent = data.depth === 0 ? '打てる手は1つだけ' : `AI の読み：${side}から見て ${ev > 0 ? '+' : ''}${ev} 石${data.exact ? '（完全読み）' : ''}　深さ ${data.depth}　${(data.nodes / 1e6).toFixed(1)}M 局面 / ${(data.ms / 1000).toFixed(1)} 秒`;
+  const side = st.blackToMove ? '黒' : '白';
+  if (!game.demo) $('info').textContent = data.rand ? '' : data.depth === 0 ? '打てる手は1つだけ'
+    : `AI の読み：${side}から見て ${data.discs > 0 ? '+' : ''}${data.discs} 石${data.exact ? '（完全読み）' : ''}　深さ ${data.depth}　${(data.nodes / 1e6).toFixed(1)}M 局面 / ${(data.ms / 1000).toFixed(1)} 秒`;
   if (pending) {
-    hintSq = data.move;
-    say(`おすすめは ${name(data.move)}（黄色の枠）`);
+    pending = false;
+    hintSq = data.move; game.hints = (game.hints || 0) + 1;
+    sfx.hint();
+    say(`おすすめは ${name(data.move)}（黄色く光っている所）`);
     render();
     return;
   }
-  play(data.move);
-  say(`AI: ${side}が ${name(data.move)} に打ちました`);
-  render();
-  later(250);
+  const who = sideName(st.blackToMove);
+  const t = doMove(data.move);
+  note = '';
+  if (!game.demo) say(`${who}が ${name(data.move)} に打ちました`);
+  later(t + 50);
 }
 
-function newGame() {
-  const m = $('mode').value;
-  humanK = m === 'b' || m === '2';
-  humanW = m === 'w' || m === '2';
-  $('nameK').textContent = '黒' + (m === '2' ? '' : humanK ? '（あなた）' : '（AI）');
-  $('nameW').textContent = '白' + (m === '2' ? '' : humanW ? '（あなた）' : '（AI）');
-  st = { k: (1n << 35n) | (1n << 28n), w: (1n << 27n) | (1n << 36n), blackToMove: true };
-  clearTimeout(stepTimer);
-  hist = []; hintSq = -1; lastSq = -1; $('info').textContent = '';
+function finish() {
+  render();
+  if (game.demo) { demoTimer = setTimeout(() => { if (mode === 'idle') startGame({ demo: true }); }, 5000); return; }
+  if (game.done) return;
+  game.done = true;
+  showResult(cnt(st.k), cnt(st.w));
+}
+
+// ---------- 画面の切り替え ----------
+function setMode(m) { mode = m; document.body.dataset.mode = m; lastInput = modeAt = performance.now(); quitArm = 0; $('quit').textContent = 'やめる'; }
+function stopAI() {
+  clearTimeout(stepTimer); clearTimeout(aiTimer); clearTimeout(demoTimer);
   if (thinking) { thinking = 0; mkWorker(); }
+  pending = false;
+}
+// cfg: { demo, watch, humanK, humanW, level, two }
+function startGame(cfg) {
+  stopAI();
+  game = Object.assign({ demo: false, watch: false, two: false, humanK: false, humanW: false, level: 2, moves: 0, humanMoves: 0, hints: 0, undos: 0, done: false }, cfg);
+  st = initial(); hist = []; hintSq = -1; lastSq = -1; anim = {}; note = '';
+  $('info').textContent = ''; $('playNote').textContent = '';
+  const nm = (h, c) => game.demo || game.watch ? c + '（AI）' : game.two ? c : h ? 'あなた' : 'AI';
+  $('nameK').textContent = nm(game.humanK, '黒');
+  $('nameW').textContent = nm(game.humanW, '白');
   worker.postMessage({ type: 'new' });
+  if (!game.demo) {
+    game.startAt = Date.now();
+    game.no = todayAll().length + 1;
+    if (vsAI()) $('playNote').textContent = `本日 ${game.no} 番目の挑戦者　AI の強さ：${LV[game.level]}`;
+    setMode('play');
+  } else setMode('idle');
   say('');
   step();
 }
+// 途中でやめた局（やめる・放置・観戦に切り替え）は「中止」で記録する
+function abandon() { if (mode === 'play' && !game.demo && !game.watch && !game.done && game.humanMoves > 0) saveGame('中止'); }
+function toIdle() {
+  abandon();
+  hl = null;
+  $('banB').textContent = 'タップではじめる';
+  $('banS').textContent = 'いま流れているのは AI どうしの見本の対局です';
+  drawRanking(); drawStats();
+  startGame({ demo: true });
+}
+function toSelect() {
+  stopAI();
+  st = initial(); hist = []; hintSq = -1; lastSq = -1; anim = {};
+  game = { demo: false, humanK: false, humanW: false, level: settings.level };
+  const askSide = settings.side === 'ask', askLv = settings.askLevel;
+  selSide = askSide ? 'b' : settings.side;
+  if (!askSide && !askLv) { startPlay(selSide, settings.level); return; }
+  sfx.button();
+  $('selHead').style.display = $('sideSeg').style.display = askSide ? '' : 'none';
+  $('lvHead').style.display = $('lvBtns').style.display = askLv ? '' : 'none';
+  $('btnGo').style.display = askLv ? 'none' : '';
+  document.querySelectorAll('#lvBtns button').forEach(b => b.classList.toggle('def', +b.dataset.lv === settings.level));
+  drawSide();
+  $('nameK').textContent = '黒'; $('nameW').textContent = '白';
+  setMode('select');
+  render();
+}
+function drawSide() { document.querySelectorAll('#sideSeg button').forEach(b => b.classList.toggle('on', b.dataset.side === selSide)); }
+function startPlay(side, lv, two = false) {
+  sfx.start();
+  startGame(two ? { humanK: true, humanW: true, two: true, level: lv } : { humanK: side === 'b', humanW: side === 'w', level: lv });
+}
 
 function undo() {
-  clearTimeout(stepTimer);
+  if (mode !== 'play' || !left(settings.undos, game.undos)) return;
+  clearTimeout(stepTimer); clearTimeout(aiTimer);
   if (thinking) { thinking = 0; mkWorker(); }
+  pending = false;
   // back to the previous position where a human was to move
+  let ok = false;
   while (hist.length) {
     const h = hist.pop();
     lastSq = h.lastSq;
     st = { k: h.k, w: h.w, blackToMove: h.blackToMove };
-    if (isHuman(st) && moves(me(st), op(st))) break;
+    if (isHuman(st) && moves(me(st), op(st))) { ok = true; break; }
   }
-  hintSq = -1;
-  say('待った：あなたの前の手番に戻しました');
+  if (!ok) { st = initial(); lastSq = -1; }
+  game.undos++;
+  hintSq = -1; anim = {}; note = '待った：前の手番に戻しました。';
+  sfx.button();
   $('info').textContent = '';
   step();
 }
 
+// ---------- 結果 ----------
+// 評価：S＝つよい・最強に勝った、A＝ふつうに勝った・引き分け、B＝やさしいに勝った・4 石差以内の負け、C＝それ以外
+function evaluate(res, diff, lv) {
+  if (res === '勝') return {
+    grade: lv >= 3 ? 'S' : lv === 2 ? 'A' : 'B', cls: 'win', title: 'あなたの勝ち！', line: `AI（${LV[lv]}）に ${diff} 石差で勝利！`,
+    eval: (diff >= 30 ? '圧勝！ 天才かも！' : diff >= 10 ? '快勝！ お見事！' : 'ぎりぎりの接戦を制した！') + (lv < 4 ? ` 次は「${LV[lv + 1]}」に挑戦してみよう` : ' 最強 AI に勝つなんてすごい！'),
+  };
+  if (res === '負') return {
+    grade: diff <= 4 ? 'B' : 'C', cls: 'lose', title: 'AI の勝ち', line: diff <= 4 ? `あと ${diff} 石差！` : `${diff} 石差で負け`,
+    eval: diff <= 4 ? 'あと少し！ 惜しかった！' : diff <= 16 ? 'いい勝負！ 角（すみ）を取るのがコツ' : 'AI は強い… 角（すみ）をねらってみよう。ヒントも使えるよ',
+  };
+  return { grade: 'A', cls: 'win', title: '引き分け！', line: 'AI と同じ石の数', eval: 'いい勝負！' };
+}
+function showResult(k, w) {
+  $('resRank').textContent = ''; $('resRankCard').style.display = 'none';
+  if (!vsAI()) {   // ふたりで対戦・AI どうし
+    const t = k > w ? '黒の勝ち！' : k < w ? '白の勝ち！' : '引き分け！';
+    $('resTitle').textContent = t; $('resTitle').className = 'win';
+    $('resGrade').style.display = 'none';
+    $('resLine').textContent = `黒 ${k} − ${w} 白`; $('resEval').textContent = '';
+    $('banB').textContent = t; $('banS').textContent = `黒 ${k} − ${w} 白`;
+    if (game.two) saveGame(k > w ? '黒勝' : k < w ? '白勝' : '分');
+    if (k !== w) sfx.win(); else sfx.draw();
+  } else {
+    const mine = game.humanK ? k : w, ai = game.humanK ? w : k;
+    const res = mine > ai ? '勝' : mine < ai ? '負' : '分', diff = Math.abs(mine - ai);
+    const e = evaluate(res, diff, game.level);
+    $('resTitle').textContent = e.title; $('resTitle').className = e.cls;
+    $('resGrade').style.display = ''; $('resGrade').textContent = e.grade;
+    $('resLine').textContent = e.line;
+    $('resEval').textContent = `あなた ${mine} 石 − AI ${ai} 石。${e.eval}`;
+    $('banB').textContent = e.title; $('banS').textContent = `あなた ${mine} − ${ai} AI`;
+    const rec = saveGame(res);
+    if (res === '勝') {
+      hl = rec;
+      const n = ranked(todayRows()).findIndex(r => same(r, rec)) + 1, best = ranked(validRows())[0];
+      $('resRank').textContent = (best && same(best, rec) ? 'これまでの最高記録！ ' : '') + `本日のランキング ${n} 位！`;
+    }
+    $('resRankCard').style.display = '';
+    drawRanking();
+    if (res === '勝') sfx.win(); else if (res === '負') sfx.lose(); else sfx.draw();
+  }
+  setMode('result');
+  resultAt = performance.now();
+}
+
+// ---------- 記録と集計 ----------
+const pad = n => String(n).padStart(2, '0');
+const stamp = d => `${d.toLocaleDateString('sv')} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const today = () => new Date().toLocaleDateString('sv');   // YYYY-MM-DD
+const same = (a, b) => a === b || (a['日時'] === b['日時'] && String(a['受付番号']) === String(b['受付番号']));
+let extra = [];   // フォルダに書き終わるまでの行（書き終わると records.rows に入る）
+const allRows = () => extra.length ? records.all.concat(extra.filter(x => !records.all.some(r => same(r, x)))) : records.all;
+const validRows = () => allRows().filter(r => (r['日時'] || '') >= (settings.resetAt || ''));
+const todayRows = () => validRows().filter(r => (r['日時'] || '').startsWith(today()));
+const todayAll = () => allRows().filter(r => (r['日時'] || '').startsWith(today()));   // 受付番号はリセットしても続ける
+const lvNum = r => Math.max(0, LV.indexOf(r['AIの強さ']));
+// ランキング：AI に勝った局を、強い AI に勝った順 → 石差が大きい順 → 早く勝った順に並べる
+const ranked = rows => rows.filter(r => r['結果'] === '勝').sort((a, b) =>
+  lvNum(b) - lvNum(a) || (+b['石差'] || 0) - (+a['石差'] || 0) || (+a['かかった秒'] || 0) - (+b['かかった秒'] || 0));
+
+function saveGame(result) {
+  const k = cnt(st.k), w = cnt(st.w);
+  const mine = game.two ? k : game.humanK ? k : w, ai = game.two ? w : game.humanK ? w : k;   // ふたりのときは 自分＝黒、AI＝白
+  const raw = {
+    '日時': stamp(new Date()), '受付番号': game.no, '手番': game.two ? 'ふたり' : game.humanK ? '黒' : '白', 'AIの強さ': game.two ? '-' : LV[game.level],
+    '結果': result, '自分の石': mine, 'AIの石': ai, '石差': mine - ai, '手数': k + w - 4, 'かかった秒': Math.round((Date.now() - game.startAt) / 1000),
+    'ヒント': game.hints, '待った': game.undos,
+  };
+  const rec = Object.fromEntries(Object.entries(raw).map(([key, v]) => [key, String(v)]));
+  const folder = records.useFolder;
+  if (folder) extra.push(rec);
+  records.append(rec)
+    .then(ok => { if (!ok && records.state === 'prompt') console.warn('記録フォルダに書けません（許可待ち）。ブラウザ内にだけ残します'); })
+    .catch(e => console.error('記録を保存できません: ' + e.message))
+    .finally(() => { extra = extra.filter(x => x !== rec); drawRanking(); drawStats(); });
+  drawStats();
+  return rec;
+}
+
+function rankItem(r, mark) {
+  const li = document.createElement('li');
+  if (mark) li.className = 'me';
+  li.innerHTML = `<b></b><span class="lv"></span><span class="sub"></span>`;
+  li.children[0].textContent = '+' + (+r['石差']);
+  li.children[1].textContent = r['AIの強さ'];
+  li.children[2].textContent = `${r['自分の石']}対${r['AIの石']}・${r['手番']}・${(r['日時'] || '').slice(11, 16)}`;
+  return li;
+}
+function drawRanking() {
+  const top = ranked(todayRows()).slice(0, 8);
+  for (const id of ['rankToday', 'rankRes']) {
+    const ol = $(id); ol.textContent = '';
+    top.forEach(r => ol.appendChild(rankItem(r, hl && same(r, hl))));
+    if (!top.length) { const li = document.createElement('div'); li.className = 'empty'; li.textContent = 'まだいません。最初の勝者になろう！'; ol.appendChild(li); }
+  }
+  const best = ranked(validRows())[0];
+  $('bestEver').textContent = '';
+  if (best) {
+    const ol = document.createElement('ol'); ol.className = 'rank one'; const li = rankItem(best); ol.appendChild(li); $('bestEver').appendChild(ol);
+    li.children[2].textContent = `${best['自分の石']}対${best['AIの石']}・${best['日時'].slice(5, 10).replace('-', '/')}`;
+  } else $('bestEver').textContent = 'まだいません';
+  const rows = todayRows();
+  $('todayCount').textContent = `本日の挑戦 ${rows.filter(r => r['手番'] !== 'ふたり').length} 局・AI に勝った ${rows.filter(r => r['結果'] === '勝').length} 局`;
+}
+function drawStats() {
+  const rows = todayRows(), plays = rows.filter(r => r['手番'] !== 'ふたり').length, wins = rows.filter(r => r['結果'] === '勝').length;
+  $('stStats').textContent = `本日 ${plays} 人`;
+  $('statsDetail').textContent = `本日：AI との対局 ${plays} 局（勝ち ${wins}）、ふたりで対戦 ${rows.length - plays} 局。記録の全件 ${allRows().length} 件` + (settings.resetAt ? `（${settings.resetAt} にリセット）` : '');
+  const s = records.local ? 'local' : records.state;
+  $('stRec').textContent = { local: '記録: ブラウザ内', none: '記録: 未設定（ブラウザ内）', prompt: '記録: 許可待ち（画面をクリック）', ok: `記録: OK（${records.name}）`, error: '記録: 書けません・読めません（設定を開く）' }[s];
+  $('stRec').className = s === 'ok' || s === 'local' ? 'ok' : s === 'none' ? '' : 'ng';
+  $('recName').textContent = records.local ? 'ブラウザ内（このブラウザではフォルダを選べません）' : records.dir ? records.dir.name : '未設定';
+  $('recState').textContent = records.local ? `（${records.all.length} 件）` : { none: '', prompt: '（許可待ち）', ok: `（${records.rows.length} 件）`, error: '（読めません: ' + (records.error || '') + '）' }[records.state];
+}
+async function recordsGrant() { if (records.state === 'prompt' && await records.grant()) drawRanking(); drawStats(); }
+
+// ---------- 設定画面 ----------
+function bindSettings() {
+  $('setAskLevel').checked = settings.askLevel; $('setSound').checked = settings.sound;
+  for (const [id, key] of [['setLevel', 'level'], ['setMaxMs', 'maxMs'], ['setSide', 'side'], ['setHints', 'hints'], ['setUndos', 'undos'], ['setIdle', 'idleSec'], ['setResult', 'resultSec'], ['setVol', 'vol']]) {
+    $(id).value = settings[key];
+    $(id).addEventListener(['setIdle', 'setResult', 'setVol'].includes(id) ? 'input' : 'change', upd);
+  }
+  $('setAskLevel').onchange = upd; $('setSound').onchange = upd;
+  function upd() {
+    settings.askLevel = $('setAskLevel').checked; settings.sound = $('setSound').checked;
+    settings.level = +$('setLevel').value; settings.maxMs = +$('setMaxMs').value; settings.side = $('setSide').value;
+    settings.hints = +$('setHints').value; settings.undos = +$('setUndos').value;
+    settings.idleSec = Math.max(10, parseInt($('setIdle').value) || 60);
+    settings.resultSec = Math.max(5, parseInt($('setResult').value) || 15);
+    settings.vol = +$('setVol').value;
+    applySound(); saveSettings(); if (st) updateButtons();
+  }
+  applySound();
+}
+function applySound() { sfx.on = settings.sound; sfx.vol = settings.vol / 100 * 0.9; $('volVal').textContent = settings.vol + '%'; }
+const settingsOpen = () => $('settings').classList.contains('show');
+// 画面が切り替わった直後（0.5 秒）は、切り替えたタップが次の画面のボタンやマスに届かないよう無視する
+const fresh = () => performance.now() - modeAt < 500 || settingsOpen();
+function toggleSettings(show = !settingsOpen()) { $('settings').classList.toggle('show', show); if (show) drawStats(); lastInput = performance.now(); }
+$('btnClose').onclick = () => toggleSettings(false);
+$('btnSoundTest').onclick = () => { sfx.unlock(); sfx.place(); sfx.flip([0, 0.07, 0.14]); setTimeout(() => sfx.win(), 700); };
+$('btnRecPick').onclick = async () => {
+  try { await records.pick(); drawRanking(); } catch (e) { if (e.name !== 'AbortError') alert('フォルダを使えません: ' + e.message); }
+  drawStats();
+};
+$('btnRecLoad').onclick = async () => {
+  try { if (records.state === 'prompt') await records.grant(); else await records.load(); drawRanking(); } catch (e) { alert('記録を読めません: ' + e.message); }
+  drawStats();
+};
+$('btnCsv').onclick = () => records.download();
+$('btnReset').onclick = () => {
+  if (!confirm('集計とランキングをリセットしますか？（records.csv は消しません）')) return;
+  settings.resetAt = stamp(new Date()); saveSettings(); drawRanking(); drawStats();
+};
+$('btnWatch').onclick = () => { toggleSettings(false); if (rules) { abandon(); startGame({ watch: true, level: 4 }); } };
+if (!records.supported) { $('btnRecPick').style.display = 'none'; $('btnRecLoad').style.display = 'none'; }
+
+// ⚙：マウスはクリックで開く。タッチ端末はお客さんが触っても開かないよう、長押し 1 秒で開く
+let gearT = 0;
+$('gear').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (e.pointerType === 'mouse') { toggleSettings(); return; }
+  $('gear').classList.add('hold');
+  gearT = setTimeout(() => { $('gear').classList.remove('hold'); toggleSettings(); }, 1000);
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) $('gear').addEventListener(ev, () => { clearTimeout(gearT); $('gear').classList.remove('hold'); });
+$('gear').addEventListener('contextmenu', e => e.preventDefault());
+
+// ---------- 操作 ----------
 const cells = [];
 function buildBoard() {
   const b = $('board');
@@ -232,30 +712,126 @@ function buildBoard() {
       const sq = r * 8 + c, d = document.createElement('div');
       d.className = 'sq'; d.appendChild(document.createElement('div'));
       d.onclick = () => {
-        if (thinking || !isHuman(st) || over(st)) return;
+        if (mode !== 'play' || fresh() || thinking || !isHuman(st) || over(st)) return;
         if (!(moves(me(st), op(st)) >> BigInt(sq) & 1n)) return;
-        play(sq);
-        say(`${st.blackToMove ? '白' : '黒'}が ${name(sq)} に打ちました`);
-        render();
-        later(150);
+        game.humanMoves++;
+        const who = sideName(st.blackToMove);
+        const t = doMove(sq);
+        note = '';
+        say(`${who}が ${name(sq)} に打ちました`);
+        later(Math.min(t, 500));
       };
       cells[sq] = d; b.appendChild(d);
     }
   }
 }
 
-$('new').onclick = newGame;
+$('btnStart').onclick = () => { if (mode === 'idle' && rules) toSelect(); };
+$('sideSeg').onclick = e => { if (fresh()) return; const b = e.target.closest('button[data-side]'); if (!b) return; selSide = b.dataset.side; sfx.button(); drawSide(); };
+$('lvBtns').onclick = e => { if (fresh()) return; const b = e.target.closest('button[data-lv]'); if (b) startPlay(selSide, +b.dataset.lv); };
+$('btnGo').onclick = () => fresh() || startPlay(selSide, settings.level);
+$('btnTwo').onclick = () => fresh() || startPlay('b', settings.level, true);
+$('btnBack').onclick = () => { if (fresh()) return; sfx.button(); toIdle(); };
 $('undo').onclick = undo;
-$('hint').onclick = () => think(true);
-$('mode').onchange = newGame;
+$('hint').onclick = () => { if (mode === 'play' && !thinking && isHuman(st) && !over(st) && left(settings.hints, game.hints)) think(true); };
+// やめる：お客さんがうっかり押しても終わらないよう、3 秒以内に 2 回押したら待機画面へ
+$('quit').onclick = () => {
+  if (performance.now() - quitArm < 3000) { toIdle(); return; }
+  quitArm = performance.now(); $('quit').textContent = 'もう一度押すとやめる';
+  setTimeout(() => { if (performance.now() - quitArm >= 3000) $('quit').textContent = 'やめる'; }, 3100);
+};
+$('btnBackIdle').onclick = () => { if (mode === 'result') toIdle(); };
 
+// 待機画面はどこを触っても始まる。結果画面もどこを触っても戻る（終わった直後の 1.5 秒は、最後の手のタップで戻らないよう無視）。
+// iPad の Safari はただの div の click を出さないことがあるので、pointerdown → pointerup で見る（ボタンはそれぞれの click で動く）
+let downMode = '';
+document.addEventListener('pointerdown', e => { downMode = mode; });
+document.addEventListener('pointerup', e => {
+  if (downMode !== mode || settingsOpen() || e.target.closest('#settings,#gear,button,select,input')) return;
+  if (mode === 'idle' && rules) toSelect();
+  else if (mode === 'result' && performance.now() - resultAt > 1500) toIdle();
+});
+const touch = () => { lastInput = performance.now(); sfx.unlock(); };
+for (const ev of ['pointerdown', 'pointerup', 'keydown']) document.addEventListener(ev, touch);
+document.addEventListener('pointerdown', recordsGrant); document.addEventListener('keydown', recordsGrant);
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input,select') && e.key !== 'Escape') return;
+  const k = e.key;
+  if (k === 's' || k === 'S') { toggleSettings(); return; }
+  if (k === 'Escape') { toggleSettings(false); return; }
+  if (k === 'f' || k === 'F') { enterFullscreen(); return; }
+  if (settingsOpen() || !rules || e.repeat) return;
+  if (mode === 'idle' && (k === 'Enter' || k === ' ')) { e.preventDefault(); toSelect(); }
+  else if (mode === 'select') {
+    if (k === 'Enter' || k === ' ') { e.preventDefault(); startPlay(selSide, settings.level); }
+    else if (/^[1-4]$/.test(k) && settings.askLevel) startPlay(selSide, +k);
+    else if ((k === 'ArrowLeft' || k === 'ArrowRight') && settings.side === 'ask') { selSide = selSide === 'b' ? 'w' : 'b'; drawSide(); }
+  }
+  else if (mode === 'play') { if (k === 'h' || k === 'H') $('hint').click(); else if ((k === 'z' || k === 'Z') && !$('undo').disabled) undo(); }
+  else if (mode === 'result' && (k === 'Enter' || k === ' ') && performance.now() - resultAt > 800) { e.preventDefault(); toIdle(); }
+});
+
+// 放置で待機画面へ戻る（結果画面は「結果を出しておく時間」で戻る）。設定を開いている間は戻らない
+setInterval(() => {
+  if (mode === 'idle' || settingsOpen()) return;
+  const now = performance.now();
+  if (mode === 'result') {
+    const remain = Math.ceil((settings.resultSec * 1000 - (now - resultAt)) / 1000);
+    $('resBack').textContent = `${Math.max(0, remain)} 秒後に最初の画面にもどります`;
+    if (remain <= 0) toIdle();
+    return;
+  }
+  if (game.watch || thinking) return;
+  if (now - lastInput > settings.idleSec * 1000) toIdle();
+}, 500);
+
+// ---------- 全画面 ----------
+// 起動_全画面.bat / 起動_全画面_Mac.command で開いたとき（?fs=1）は、最初のクリック/キーで全画面にする（ブラウザの決まりで操作が必要）。
+// 解除は Esc（ブラウザ標準）。もう一度全画面にするときは F キー。
+const wantFs = new URLSearchParams(location.search).has('fs');
+let fsDone = false;
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+function enterFullscreen() {
+  const el = document.documentElement, fn = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!fn) return;
+  try { const p = fn.call(el); if (p && p.catch) p.catch(e => console.warn('全画面にできません: ' + e.message)); } catch (e) { console.warn('全画面にできません: ' + e.message); }
+}
+function updateFsHint() { $('fsHint').style.display = wantFs && !fsDone && !fsEl() ? 'block' : 'none'; }
+const autoFs = e => {
+  if (!wantFs || fsDone || fsEl()) return;
+  if (e.type === 'keydown' && ['Escape', 'f', 'F', 's', 'S'].includes(e.key)) return;
+  fsDone = true; enterFullscreen(); updateFsHint();
+};
+document.addEventListener('pointerdown', autoFs); document.addEventListener('keydown', autoFs);
+const onFsChange = () => { if (fsEl()) fsDone = true; updateFsHint(); };
+document.addEventListener('fullscreenchange', onFsChange); document.addEventListener('webkitfullscreenchange', onFsChange);
+updateFsHint();
+
+// ---------- 起動 ----------
 buildBoard();
-fetch(WASM).then(r => r.arrayBuffer()).then(buf => WebAssembly.instantiate(buf, { env: { millis: () => 0 } }))
-  .then(({ instance }) => { rules = instance.exports; rules._initialize(); mkWorker(); newGame(); })
+bindSettings();
+st = initial(); hist = [];
+render(); drawRanking(); drawStats();
+(async () => {
+  try { await records.restore(); } catch (e) { console.warn('記録フォルダを読めません: ' + e.message); }
+  drawRanking(); drawStats();
+})();
+fetch(WASM).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+  .then(buf => WebAssembly.instantiate(buf, { env: { millis: () => 0 } }))
+  .then(({ instance }) => {
+    rules = instance.exports; rules._initialize(); mkWorker();
+    $('stAi').textContent = 'AI: OK'; $('stAi').className = 'ok';
+    toIdle();
+  })
   .catch(e => {
-    say('読み込みに失敗しました。ページを再読み込みしてください（ファイルを直接開いた場合は http(s) で開く。iPhone は iOS 15 以上）。');
-    $('info').textContent = String(e);
+    $('banB').textContent = '読み込みに失敗しました';
+    $('banS').textContent = 'ページを再読み込みしてください（iPhone / iPad は iOS 15 以上）';
+    aiError(String(e));
   });
+
+// テスト用
+window.__dbg = { get mode() { return mode; }, get game() { return game; }, get st() { return st; }, settings, records, toSelect, startPlay, toIdle,
+  click: sq => cells[sq].click(), legal: () => bits(moves(me(st), op(st))), get thinking() { return thinking; }, get hl() { return hl; } };
 </script>
 </body>
 </html>

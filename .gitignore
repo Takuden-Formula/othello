@@ -1,3 +1,4 @@
 mac/othello
 src/othello
 *.o
+server_log.txt
