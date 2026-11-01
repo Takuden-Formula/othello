@@ -17,7 +17,8 @@ static SearchResult res;
 
 static uint64_t mk(uint32_t lo, uint32_t hi) { return (uint64_t)hi << 32 | lo; }
 
-EXPORT("init")     uint32_t w_init(void) { return oth_init(); }
+/* bits = log2 of the hash table entries (24 B each), 0 = default (20: 24 MB) */
+EXPORT("init")     uint32_t w_init(int bits) { return bits ? oth_init_tt(bits) : oth_init(); }
 EXPORT("new_game") void     w_new_game(void) { oth_new_game(); }
 
 EXPORT("moves") void w_moves(uint32_t plo, uint32_t phi, uint32_t olo, uint32_t ohi)

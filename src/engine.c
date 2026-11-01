@@ -5,9 +5,12 @@
  *   - bitboard move generation (fast on 32-bit MCUs too)
  *   - iterative deepening PVS with a transposition table
  *   - move ordering (hash move, shallow eval, fastest-first in the endgame)
- *   - evaluation: pattern weights learned from self-play games (patterns.h, weights.c,
- *     tools/train/). Without OTH_PATTERNS (ESP32: not enough memory) a hand-written one is used:
- *     mobility, potential mobility, corners, X/C squares, stable discs, parity
+ *   - evaluation: pattern weights learned from self-play games (patterns.h, tools/train/).
+ *     OTH_PATTERNS 1 = PC level: large tables (weights.c), decoded into ~3 MB of RAM.
+ *     OTH_PATTERNS 2 = microcontroller level: small 8-bit tables (weights_mcu.c, ~370 KB) read
+ *     straight from flash, so it needs almost no RAM (default on Arduino / ESP32).
+ *     OTH_PATTERNS 0 = the old hand-written one: mobility, potential mobility, corners, X/C squares,
+ *     stable discs, parity
  *   - perfect endgame: once depth >= empties the search plays the game out exactly
  *     (parity ordering for the last empties, jump to the exact search near the end)
  */
@@ -17,12 +20,13 @@
 
 #ifndef OTH_PATTERNS
 # if defined(ARDUINO)
-#  define OTH_PATTERNS 0
+#  define OTH_PATTERNS 2
 # else
 #  define OTH_PATTERNS 1
 # endif
 #endif
 #if OTH_PATTERNS
+# define OTH_PAT_SET OTH_PATTERNS
 # include "patterns.h"
 #endif
 
@@ -30,7 +34,7 @@
 # if defined(ARDUINO)
 #  define OTH_TT_BITS 13          /* 8192 * 24 B = 192 KB, halved automatically if malloc fails */
 # else
-#  define OTH_TT_BITS 21          /* 2M * 24 B = 48 MB (PC / Raspberry Pi) */
+#  define OTH_TT_BITS 22          /* 4M * 24 B = 96 MB (PC / Raspberry Pi) */
 # endif
 #endif
 
@@ -200,12 +204,51 @@ static const struct { int c, x, c1, c2; } CORNER_INFO[4] = {
 };
 
 #if OTH_PATTERNS
-/* ---- pattern evaluation: weights in 1/16 disc, per phase: 4 scalars then the pattern tables */
+static PatSet pset;
+static int pstride, pready;
+
+#if OTH_PATTERNS == 2
+/* ---- microcontroller level: per phase, 8-bit pattern tables (1/PW_Q disc) and 16-bit scalars
+ * (1/PS_Q disc), both const so they stay in flash */
+#define PW_Q 8
+#define PS_Q 256
+extern const int8_t  oth_wmcu[];
+extern const int16_t oth_wmcu_sc[];
+
+static int load_weights(void)
+{
+    if (!pready) { pat_build(&pset); pstride = pset.offset[PAT_TYPES]; pready = 1; }
+    return 1;
+}
+
+static int pattern_eval(uint64_t P, uint64_t O, uint64_t mP, uint64_t mO)
+{
+    uint64_t E = ~(P | O);
+    int ne = pc(E), ph = pat_phase(ne), k, i;
+    const int8_t  *t = oth_wmcu + (size_t)ph * pstride;
+    const int16_t *w = oth_wmcu_sc + ph * PAT_SCALARS;
+    int32_t s = w[0]
+        + w[1] * (pc(mP) - pc(mO))
+        + w[2] * (pc(neighbours(O) & E) - pc(neighbours(P) & E))
+        + w[3] * ((ne & 1) ? 1 : -1), sp = 0;
+    for (k = 0; k < pset.n; k++) {
+        uint32_t x = 0;
+        for (i = pset.len[k] - 1; i >= 0; i--) {
+            int sq = pset.sq[k][i];
+            x = x * 3 + (uint32_t)((P >> sq & 1) | (O >> sq & 1) << 1);
+        }
+        sp += t[pset.offset[pset.type[k]] + x];
+    }
+    s = (s + sp * (PS_Q / PW_Q)) * OTH_SCALE / PS_Q;
+    if (s > OTH_EVAL_MAX)  s = OTH_EVAL_MAX;
+    if (s < -OTH_EVAL_MAX) s = -OTH_EVAL_MAX;
+    return (int)s;
+}
+#else
+/* ---- PC level: weights in 1/16 disc, per phase: 4 scalars then the pattern tables */
 extern const uint32_t oth_wdata_len;
 extern const unsigned char oth_wdata[];
-static PatSet pset;
 static int16_t *pweights;
-static int pstride;
 
 static int load_weights(void)
 {
@@ -224,6 +267,7 @@ static int load_weights(void)
         if (zero) i += (int)v;
         else pweights[i++] = (int16_t)((v & 1) ? (int)((v + 1) / 2) : -(int)(v / 2));
     }
+    pready = 1;
     return 1;
 }
 
@@ -251,6 +295,7 @@ static int pattern_eval(uint64_t P, uint64_t O, uint64_t mP, uint64_t mO)
     return (int)s;
 }
 #endif
+#endif
 
 static int evaluate(uint64_t P, uint64_t O)
 {
@@ -260,7 +305,7 @@ static int evaluate(uint64_t P, uint64_t O)
 
     if (!mP && !mO) return final_score(P, O);
 #if OTH_PATTERNS
-    if (pweights) return pattern_eval(P, O, mP, mO);
+    if (pready) return pattern_eval(P, O, mP, mO);
 #endif
 
     if (ne > 40)      { wMob = 90; wPot = 25; wFront = 30; wStab = 120; wDisc = -4; }
@@ -321,9 +366,10 @@ static inline uint32_t hash_pos(uint64_t P, uint64_t O)
     return (uint32_t)(h ^ (h >> 32)) & tt_mask;
 }
 
-uint32_t oth_init(void)
+uint32_t oth_init(void) { return oth_init_tt(OTH_TT_BITS); }
+
+uint32_t oth_init_tt(int bits)
 {
-    int bits = OTH_TT_BITS;
     init_diagonals();
 #if OTH_PATTERNS
     load_weights();
@@ -376,14 +422,20 @@ static int aborted;
  * cut without searching deeply. sigma = spread of (deep - shallow) in eval units, measured by
  * tools/train/mpc_calib.c per phase (empties / 6) and depth. Not used in exact endgame searches. */
 #ifndef OTH_MPC
-# define OTH_MPC OTH_PATTERNS     /* the sigmas were measured with the pattern evaluation */
+# define OTH_MPC (OTH_PATTERNS != 0) /* the sigmas were measured with the pattern evaluation */
 #endif
 #define MPC_MIN_DEPTH 3
 #define MPC_MAX_DEPTH 14
-#define MPC_T10       15         /* cut at 1.5 sigma */
+#ifndef MPC_T10
+# define MPC_T10      11         /* cut at 1.1 sigma (tested against 1.5 and 1.9) */
+#endif
 static int mpc_on = OTH_MPC;
 static const int16_t MPC_SIGMA[11][MPC_MAX_DEPTH + 1] = {
+#if OTH_PATTERNS == 2
+#include "mpc_sigma_mcu.h"
+#else
 #include "mpc_sigma.h"
+#endif
 };
 static inline int mpc_shallow(int d) { return d - 2 * ((d + 3) / 4); }
 

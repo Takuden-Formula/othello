@@ -11,11 +11,37 @@
 
 #include <stdint.h>
 
-#define PAT_TYPES   11
+/* Two shape sets: OTH_PAT_SET 1 = PC (large tables, decoded into RAM), 2 = microcontroller (small
+ * tables read straight from flash: no shape longer than 9 squares, fewer phases). */
+#ifndef OTH_PAT_SET
+# define OTH_PAT_SET 1
+#endif
+
 #define PAT_MAXLEN  10
-#define PAT_PHASES  10
 #define PAT_SCALARS 4             /* bias, mobility, potential mobility, parity */
 
+#if OTH_PAT_SET == 2
+#define PAT_TYPES   11
+#define PAT_PHASES  6
+static const signed char PAT_BASE[PAT_TYPES][PAT_MAXLEN + 1] = {
+    /* squares as row*8+col, -1 terminated; the first element of each shape is its "corner" end */
+    {  0,  1,  2,  3,  4,  5,  6,  7, -1 },           /* edge                  3^8  */
+    {  0,  1,  2,  8,  9, 10, 16, 17, 18, -1 },       /* corner 3x3            3^9  */
+    {  0,  1,  2,  3,  8,  9, 10, 11, -1 },           /* corner 2x4            3^8  */
+    {  8,  9, 10, 11, 12, 13, 14, 15, -1 },           /* row 2                 3^8  */
+    { 16, 17, 18, 19, 20, 21, 22, 23, -1 },           /* row 3                 3^8  */
+    { 24, 25, 26, 27, 28, 29, 30, 31, -1 },           /* row 4                 3^8  */
+    {  0,  9, 18, 27, 36, 45, 54, 63, -1 },           /* diagonal 8            3^8  */
+    {  1, 10, 19, 28, 37, 46, 55, -1 },               /* diagonal 7            3^7  */
+    {  2, 11, 20, 29, 38, 47, -1 },                   /* diagonal 6            3^6  */
+    {  3, 12, 21, 30, 39, -1 },                       /* diagonal 5            3^5  */
+    {  4, 13, 22, 31, -1 },                           /* diagonal 4            3^4  */
+};
+#else
+#define PAT_TYPES   11
+#ifndef PAT_PHASES
+# define PAT_PHASES 10
+#endif
 static const signed char PAT_BASE[PAT_TYPES][PAT_MAXLEN + 1] = {
     /* squares as row*8+col, -1 terminated; the first element of each shape is its "corner" end */
     {  0,  1,  2,  3,  4,  5,  6,  7,  9, 14, -1 },   /* edge + 2 X squares   3^10 */
@@ -30,6 +56,7 @@ static const signed char PAT_BASE[PAT_TYPES][PAT_MAXLEN + 1] = {
     {  3, 12, 21, 30, 39, -1 },                       /* diagonal 5            3^5  */
     {  4, 13, 22, 31, -1 },                           /* diagonal 4            3^4  */
 };
+#endif
 
 typedef struct {
     int     n;                    /* number of instances */
@@ -49,7 +76,7 @@ static int pat_sym(int sq, int s)
     return r * 8 + c;
 }
 
-/* Builds the 46 instances: the 8 symmetries of every shape, keeping one per distinct square set. */
+/* Builds the instances (46 in both sets): the 8 symmetries of every shape, keeping one per distinct square set. */
 static void pat_build(PatSet *ps)
 {
     int t, s, i, j, off = 0;

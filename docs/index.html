@@ -264,7 +264,7 @@ import { Records } from './records.js?v=1';
 import { Sfx } from './sound.js?v=1';
 
 const $ = id => document.getElementById(id);
-const WASM = 'othello.wasm?v=2';   // raise v when othello.wasm changes (GitHub Pages caches ~10 min)
+const WASM = 'othello.wasm?v=3';   // raise v when othello.wasm changes (GitHub Pages caches ~10 min)
 const FULL = (1n << 64n) - 1n;
 const split = (p, o) => [Number(p & 0xffffffffn), Number(p >> 32n), Number(o & 0xffffffffn), Number(o >> 32n)];
 const name = sq => 'abcdefgh'[sq & 7] + ((sq >> 3) + 1);
@@ -292,9 +292,12 @@ let st, hist, thinking = 0, reqId = 0, hintSq = -1, lastSq = -1, pending = false
 let mode = 'idle', game = { demo: true, humanK: false, humanW: false, level: 2 };
 let selSide = 'b', resultAt = 0, modeAt = 0, lastInput = performance.now(), quitArm = 0, hl = null;
 
+// PC は置換表を 2^22 件（96 MB）、スマホ・タブレットは 2^20 件（24 MB）
+const MOBILE = /Mobi|Android|iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+const TT_BITS = MOBILE || (navigator.deviceMemory && navigator.deviceMemory < 4) ? 20 : 22;
 function mkWorker() {
   if (worker) worker.terminate();
-  worker = new Worker('worker.js?v=2');
+  worker = new Worker('worker.js?v=3&tt=' + TT_BITS);
   worker.onmessage = onResult;
   worker.onerror = () => aiError('');
 }

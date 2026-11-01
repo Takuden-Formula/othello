@@ -1,8 +1,10 @@
 /*
  * Othello for ESP32 - play over the serial monitor (115200 bps, line ending = LF or CR+LF)
  *
- * engine.c / engine.h in this folder are the same engine as the PC / Raspberry Pi version
- * (built without the learned pattern evaluation, which needs ~3 MB of RAM; see OTH_PATTERNS).
+ * engine.c / engine.h / patterns.h in this folder are the same engine as the PC / Raspberry Pi
+ * version, built at the "microcontroller level" (OTH_PATTERNS=2): a smaller learned pattern
+ * evaluation (weights_mcu.c, ~370 KB of 8-bit tables) that is read straight from flash, so it needs
+ * almost no RAM. The PC level tables (weights.c) would need ~3 MB of RAM.
  *
  * Commands:
  *   d3        play a move

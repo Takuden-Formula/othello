@@ -13,6 +13,7 @@ C 言語で作ったオセロ AI（ビットボード＋αβ探索（PVS）＋�
 - **待機中は AI どうしの見本の対局**が流れ、本日のランキングとこれまでの最高を表示します。
 - **記録は PC のフォルダに保存**：設定で選んだフォルダの `records.csv` に1局ごとに書き足し、起動時にそこからランキングと集計を読み込みます。
 - **iPad などのタッチ端末でも遊べます**（縦でも横でも盤面を大きく出します）。
+- AI は **PC 用**（ブラウザ版・ターミナル版。大きい学習評価）と**マイコン用**（ESP32 版。フラッシュに置ける小さい学習評価）の 2 つのレベルに分かれています（下の「AI のしくみ」）。
 - ターミナル版（`windows/othello.exe`、`mac/オセロ_Mac.command`）と ESP32 版もそのまま残しています（下の「5. ファイル」）。
 
 ## 0. いちばん簡単な遊び方（インストール不要）
@@ -158,10 +159,11 @@ Safari で **https://takuden-formula.github.io/othello/** を開き、共有ボ�
 | `serve.ps1`, `起動.bat`, `起動_全画面.bat` | ローカルサーバ（`docs/` を配信）と起動用（Windows） |
 | `起動_Mac.command`, `起動_全画面_Mac.command`, `mac/start.sh`, `mac/serve.pl` | ローカルサーバと起動用（Mac。サーバは標準の Perl） |
 | `mac/install.sh` | Mac へ 1 行で入れるスクリプト（デスクトップに `othello` を作る） |
-| `src/` | AI 本体 `engine.c` / `engine.h`、評価の形 `patterns.h`、学習した重み `weights.c`（自動生成）、MPC の表 `mpc_sigma.h`（自動生成）、ターミナル版 `main.c`、`Makefile`（Linux / ラズパイは `make`）、ブラウザ版の橋渡し `wasm_api.c` |
-| `windows/othello.exe`, `windows/遊び方.txt` | ターミナル版（Windows）。ダブルクリックで遊べる |
+| `src/` | AI 本体 `engine.c` / `engine.h`、評価の形 `patterns.h`（PC 用とマイコン用の 2 組）、学習した重み `weights.c`（PC 用）と `weights_mcu.c`（マイコン用）、MPC の表 `mpc_sigma.h` / `mpc_sigma_mcu.h`（いずれも自動生成）、ターミナル版 `main.c`、`Makefile`（Linux / ラズパイは `make`、マイコン用の強さを PC で試すなら `make othello_mcu`）、ブラウザ版の橋渡し `wasm_api.c` |
+| `windows/othello.exe`, `windows/遊び方.txt` | ターミナル版（Windows、PC 用の AI）。ダブルクリックで遊べる |
+| `windows/othello_mcu.exe` | ターミナル版のマイコン用の AI（ESP32 版と同じ評価・同じ置換表の大きさ。強さの比べ用） |
 | `mac/オセロ_Mac.command` | ターミナル版（Mac）。初回だけ自動でビルド。`1`（黒）/`2`（白）/`3`（AI どうし）を選び `d3` のように打つ。`undo`・`hint`・`quit`。`-t 10` で 1 手 10 秒 |
-| `esp32/othello_esp32/` | ESP32 用 Arduino スケッチ（シリアルモニタ 115200bps で遊ぶ） |
+| `esp32/othello_esp32/` | ESP32 用 Arduino スケッチ（シリアルモニタ 115200bps で遊ぶ）。マイコン用の AI（`weights_mcu.c` などを同じフォルダに置いてある） |
 | `tools/build_wasm.sh` | `othello.wasm` を作り直す（`pip install ziglang` か zig が必要） |
 | `tools/train/` | 評価の学習：自己対戦でデータを作る `selfplay.c`、重みを学習して `src/weights.c` を書く `train.c`、MPC の表を測る `mpc_calib.c` |
 
@@ -173,30 +175,45 @@ make
 ./othello -c w -t 10 # あなた = 白、AI は 1 手 10 秒
 ./othello -c none    # AI どうし
 ```
-置換表 48 MB ＋重み 3 MB を使います（Raspberry Pi 3 以降なら問題なし）。`gcc` は Raspberry Pi OS に最初から入っています。
+置換表 96 MB ＋重み 3 MB を使います（Raspberry Pi 3 以降なら問題なし）。メモリの少ない機種は `make CFLAGS="-O3 -DOTH_TT_BITS=20"`（24 MB）か、マイコン用の `make othello_mcu`。`gcc` は Raspberry Pi OS に最初から入っています。
 
-### AI のしくみ（2026-11-01 に強くした）
+### AI のしくみ（2026-11-01 に強くし、PC 用とマイコン用に分けた）
 | 部分 | 中身 |
 |---|---|
-| 評価 | 盤面を 46 個の形（辺＋X 打ち・隅 3×3・隅 2×5・2〜4 列目・斜め 4〜8）に分け、形ごとに「その並びは何石ぶん得か」を表で持つ（10 段階の局面ごと、約 167,000 通り × 10）。表は自己対戦 約 13 万局・800 万局面から最小二乗法で学習。序盤は「同じ対局の 8 手先の評価」を目標に混ぜて（TD 学習）、結果のばらつきを減らす |
-| 探索 | αβ（PVS）＋置換表＋反復深化。**Multi-ProbCut**：浅い読みで「深く読んでも結果が窓の外」と高い確率で分かる枝を切る（ずれの大きさは `mpc_calib.c` で測った表） |
+| 評価 | 盤面をいくつかの形（辺・隅のブロック・2〜4 列目・斜め）に分け、形ごとに「その並びは何石ぶん得か」を表で持つ。表は自己対戦 約 33 万局・2000 万局面（深さ 6〜8 で打たせ、残り 14 マスからは完全読み）から最小二乗法で学習。序盤は「同じ対局の少し先の評価」を目標に混ぜて（TD 学習）、結果のばらつきを減らす |
+| 探索 | αβ（PVS）＋置換表＋反復深化。**Multi-ProbCut**：浅い読みで「深く読んでも結果が窓の外」と高い確率で分かる枝を切る（ずれの大きさは `mpc_calib.c` で測った表。切るしきい値は 1.1σ） |
 | 終盤 | 空きが少なくなったら途中の深さを飛ばして最後まで読む。偶数理論（空きが奇数の区画から打つ）で手の順を並べる。完全読みでは MPC を使わない（結果は正確） |
-| ESP32 | メモリが足りないので学習した評価と MPC は使わず、前の手書きの評価（`OTH_PATTERNS=0`） |
 
-前の版との比較（同じ PC・同じ持ち時間 1 手 0.05 秒、ランダムな 8 手の序盤 200 通りを先後入れ替えて 400 局）：**347 勝 40 敗 13 分け（勝率 88%、平均 +20 石）**。同じ局面を 2 秒読むと深さ 13 → 17。空き 20 の完全読みは平均 6.7 秒 → 0.55 秒（結果は前の版と全局面で一致）。ブラウザ版の最強（初期値 3 秒）は序盤から深さ 17 前後まで読みます。
+**2 つのレベル**（`OTH_PATTERNS` で切り替え。PC・ラズパイは 1、Arduino / ESP32 は自動で 2）
+| | PC 用（`OTH_PATTERNS=1`） | マイコン用（`OTH_PATTERNS=2`） |
+|---|---|---|
+| 使うところ | ブラウザ版、`windows/othello.exe`、Mac・ラズパイのターミナル版 | ESP32 版、`windows/othello_mcu.exe` |
+| 評価の表 | 46 個の形（辺＋X 打ち 3^10・隅 2×5 3^10 など）、10 段階、16 bit。約 167,000 通り × 10 → 起動時に RAM へ展開（約 3 MB） | 46 個の形（9 マス以下：辺 3^8・隅 3×3・隅 2×4 など）、6 段階、**8 bit**。約 62,000 通り × 6 = 370 KB を**フラッシュから直接読む**（RAM はほぼ使わない） |
+| 置換表 | 96 MB（ブラウザは PC で開くと 96 MB、スマホ・iPad は 24 MB） | 192 KB（8192 件） |
+| ESP32 での大きさ | – | フラッシュ 669 KB（51%）、RAM のグローバル変数 27 KB（8%）。標準のパーティションのまま入る |
+
+**強さの比べ（同じ PC で、ランダムな 8 手の序盤から先後入れ替えて対局）**
+| 組み合わせ | 持ち時間 | 結果 |
+|---|---|---|
+| PC 用：今回 vs 前の版 | 1 手 0.05 秒・800 局 | 484 勝 285 敗 31 分け（**勝率 62.4%**、平均 +4.9 石） |
+| PC 用：今回 vs 前の版 | 1 手 0.3 秒・400 局 | 245 勝 145 敗 10 分け（**勝率 62.5%**、平均 +5.4 石） |
+| マイコン用：今回 vs 前の ESP32 版（手書きの評価） | 1 手 0.05 秒・800 局（置換表は両方 8192 件） | 702 勝 84 敗 14 分け（**勝率 88.6%**、平均 +21.8 石） |
+
+前の版のときの比較（その前の版に 88%）と合わせると、PC 用は 2 段階強くなっています。空き 18 の完全読み 60 局面は前の版と結果が全部一致。
 
 ### AI を直したとき
-- `src/engine.c` / `engine.h` を直したら `esp32/othello_esp32/` にもコピーする（`mpc_sigma.h` も。`patterns.h` と `weights.c` は ESP32 では使わない）
-- ブラウザ版：`bash tools/build_wasm.sh` → `docs/index.html` と `docs/worker.js` の `?v=2` の数字を1つ上げる（GitHub Pages は 10 分ほどキャッシュするため）→ コミットして push（1〜2分で反映）
-- Windows 版：`src/` で `python -m ziglang cc -target x86_64-windows-gnu -O3 -march=x86_64_v2 -s -o ../windows/othello.exe main.c engine.c weights.c`（MinGW gcc なら `gcc -O3 -march=x86-64-v2 -static -s -o othello.exe main.c engine.c weights.c`）
-- 評価を学習し直す（12 コアの PC で 1 時間ほど。データは数百 MB になるのでリポジトリの外に置く）：
-  1. `selfplay.c` を `src/engine.c src/weights.c` と一緒にビルドし、`selfplay 7000 <seed> 4 r_<seed>.bin` をコアの数だけ別々の seed で並べて動かす
-  2. `train.c` をビルドし、`train src/weights.c 60 r_*.bin`（前のデータも一緒に渡すとよい）
-  3. `mpc_calib.c`（`weights.c` と一緒にビルド）で `mpc_calib 1500 r_*.bin > src/mpc_sigma.h`
-  4. 前の版と対局させて強くなったか確かめてから、上の手順でブラウザ版・Windows 版を作り直す
+- `src/engine.c` / `engine.h` / `patterns.h` を直したら `esp32/othello_esp32/` にもコピーする（`weights_mcu.c`・`mpc_sigma_mcu.h`・`mpc_sigma.h` も。`weights.c` は ESP32 には置かない：Arduino はフォルダ内の .c を全部ビルドするため）
+- ブラウザ版：`bash tools/build_wasm.sh` → `docs/index.html` と `docs/worker.js` の `?v=3` の数字を1つ上げる（GitHub Pages は 10 分ほどキャッシュするため）→ コミットして push（1〜2分で反映）
+- Windows 版：`src/` で `python -m ziglang cc -target x86_64-windows-gnu -O3 -march=x86_64_v2 -s -o ../windows/othello.exe main.c engine.c weights.c`（MinGW gcc なら `gcc -O3 -march=x86-64-v2 -static -s -o othello.exe main.c engine.c weights.c`）。マイコン用は `-DOTH_PATTERNS=2 -DOTH_TT_BITS=13 -o ../windows/othello_mcu.exe main.c engine.c weights_mcu.c`
+- 評価を学習し直す（12 スレッドの PC で合計 2〜3 時間。データは数百 MB になるのでリポジトリの外に置く）：
+  1. `selfplay.c` を `src/engine.c src/weights.c` と一緒にビルドし、`selfplay 15000 <seed> 6 r_<seed>.bin` をコアの数だけ別々の seed で並べて動かす（深さ 6 で 1 本あたり約 40 分）
+  2. `train.c` をビルドし、`train src/weights.c 60 r_*.bin`。マイコン用は `-DOTH_PAT_SET=2` を付けてビルドし `train src/weights_mcu.c 60 r_*.bin`（同じデータでよい）
+  3. `mpc_calib.c` を `weights.c` と一緒にビルドして `mpc_calib 1500 r_*.bin > src/mpc_sigma.h`。マイコン用は `-DOTH_PATTERNS=2` と `weights_mcu.c` でビルドして `> src/mpc_sigma_mcu.h`
+  4. 前の版と対局させて強くなったか確かめてから、上の手順でブラウザ版・Windows 版を作り直し、ESP32 のフォルダにコピーする
 - Mac のターミナル版：次に `オセロ_Mac.command` を開いたときに自動でビルドし直す
 
 ## 6. 確認状況
+- **確認済み（2026-11-01、PC 用とマイコン用に分けたとき）**：上の対局（PC 用 1,200 局、マイコン用 800 局）、空き 18 の完全読み 60 局面が前の版と一致、perft 9 が正しい数（3,005,288）、ブラウザ版（WebAssembly）で置換表 2^22（96 MB）と 2^20 の両方で初期化と探索ができること、Windows 版 `othello.exe`・`othello_mcu.exe` の起動、**ESP32 のビルド（esp32 コア 4.0.0、フラッシュ 51%・RAM 8%）**。**ESP32 実機での動作・速さは未確認**（書き込んでいない）
 - **確認済み（2026-11-01、AI を強くしたとき）**：前の版との 400 局の対局（上の結果）、空き 16 と 20 の完全読みの結果が前の版と全局面で一致、perft（手の生成）が前と同じ数、ブラウザ版（WebAssembly）で最強と対局して深さ 17・エラーなし、Windows 版 `othello.exe` の起動、ESP32 向けの設定（`ARDUINO` 定義）でコンパイルが通ること。**ラズパイ実機と ESP32 実機では未確認**
 - **確認済み（2026-11、Windows の Chrome）**：
   - `python -m http.server` と `serve.ps1`（ポート 8801）で配信して、待機（AI どうしのデモ）→ タップ → 黒白・強さを選ぶ → 対局 → 結果 → 待機、の流れ。やさしい（勝ち：評価 B・本日 1 位・これまでの最高）と最強（1 秒設定で負け：評価 C）を最後まで自動で打って確認

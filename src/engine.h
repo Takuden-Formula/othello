@@ -35,6 +35,7 @@ uint32_t oth_millis(void);
 
 /* Allocate the hash table. Returns number of entries actually allocated. */
 uint32_t oth_init(void);
+uint32_t oth_init_tt(int bits);                 /* same, with 2^bits entries (24 B each) */
 void     oth_new_game(void);                    /* clears the hash table */
 
 void     oth_start(Board *b);                   /* initial position, black to move */
