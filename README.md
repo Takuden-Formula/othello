@@ -164,6 +164,7 @@ Safari で **https://takuden-formula.github.io/othello/** を開き、共有ボ�
 | `windows/othello_mcu.exe` | ターミナル版のマイコン用の AI（ESP32 版と同じ評価・同じ置換表の大きさ。強さの比べ用） |
 | `mac/オセロ_Mac.command` | ターミナル版（Mac）。初回だけ自動でビルド。`1`（黒）/`2`（白）/`3`（AI どうし）を選び `d3` のように打つ。`undo`・`hint`・`quit`。`-t 10` で 1 手 10 秒 |
 | `esp32/othello_esp32/` | ESP32 用 Arduino スケッチ（シリアルモニタ 115200bps で遊ぶ）。マイコン用の AI（`weights_mcu.c` などを同じフォルダに置いてある） |
+| `pico/othello_pico/` | Raspberry Pi Pico（RP2040）用 Arduino スケッチ（arduino-pico コア、ボード「Raspberry Pi Pico」）。マイコン用の AI を core1 で 40 KB の専用スタックで動かす。考え中は基板の LED が光る |
 | `tools/build_wasm.sh` | `othello.wasm` を作り直す（`pip install ziglang` か zig が必要） |
 | `tools/train/` | 評価の学習：自己対戦でデータを作る `selfplay.c`、重みを学習して `src/weights.c` を書く `train.c`、MPC の表を測る `mpc_calib.c` |
 
@@ -202,7 +203,7 @@ make
 前の版のときの比較（その前の版に 88%）と合わせると、PC 用は 2 段階強くなっています。空き 18 の完全読み 60 局面は前の版と結果が全部一致。
 
 ### AI を直したとき
-- `src/engine.c` / `engine.h` / `patterns.h` を直したら `esp32/othello_esp32/` にもコピーする（`weights_mcu.c`・`mpc_sigma_mcu.h`・`mpc_sigma.h` も。`weights.c` は ESP32 には置かない：Arduino はフォルダ内の .c を全部ビルドするため）
+- `src/engine.c` / `engine.h` / `patterns.h` を直したら `esp32/othello_esp32/` と `pico/othello_pico/` にもコピーする（`weights_mcu.c`・`mpc_sigma_mcu.h`・`mpc_sigma.h` も。`weights.c` は ESP32 には置かない：Arduino はフォルダ内の .c を全部ビルドするため）
 - ブラウザ版：`bash tools/build_wasm.sh` → `docs/index.html` と `docs/worker.js` の `?v=3` の数字を1つ上げる（GitHub Pages は 10 分ほどキャッシュするため）→ コミットして push（1〜2分で反映）
 - Windows 版：`src/` で `python -m ziglang cc -target x86_64-windows-gnu -O3 -march=x86_64_v2 -s -o ../windows/othello.exe main.c engine.c weights.c`（MinGW gcc なら `gcc -O3 -march=x86-64-v2 -static -s -o othello.exe main.c engine.c weights.c`）。マイコン用は `-DOTH_PATTERNS=2 -DOTH_TT_BITS=13 -o ../windows/othello_mcu.exe main.c engine.c weights_mcu.c`
 - 評価を学習し直す（12 スレッドの PC で合計 2〜3 時間。データは数百 MB になるのでリポジトリの外に置く）：

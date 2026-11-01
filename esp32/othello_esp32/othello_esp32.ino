@@ -19,6 +19,10 @@
 
 extern "C" uint32_t oth_millis(void) { return millis(); }
 
+/* The search is recursive (about 800 bytes of stack per ply, 20+ plies in the endgame); the default
+ * loop() stack of 8 KB is not enough. */
+SET_LOOP_TASK_STACK_SIZE(32 * 1024);
+
 struct Pos { Board b; bool blackToMove; };
 
 static Pos ps;

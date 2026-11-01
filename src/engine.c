@@ -31,8 +31,10 @@
 #endif
 
 #ifndef OTH_TT_BITS
-# if defined(ARDUINO)
-#  define OTH_TT_BITS 13          /* 8192 * 24 B = 192 KB, halved automatically if malloc fails */
+# if defined(ARDUINO_ARCH_RP2040)
+#  define OTH_TT_BITS 12          /* Raspberry Pi Pico: 4096 * 24 B = 96 KB of its 264 KB RAM */
+# elif defined(ARDUINO)
+#  define OTH_TT_BITS 13         /* 8192 * 24 B = 192 KB, halved automatically if malloc fails */
 # else
 #  define OTH_TT_BITS 22          /* 4M * 24 B = 96 MB (PC / Raspberry Pi) */
 # endif
