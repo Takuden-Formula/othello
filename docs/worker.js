@@ -1,6 +1,6 @@
 // AI search runs here so the page stays responsive while the engine thinks.
 let ex = null;
-const ready = fetch('othello.wasm?v=1').then(r => r.arrayBuffer()).then(buf => WebAssembly.instantiate(buf, {
+const ready = fetch('othello.wasm?v=2').then(r => r.arrayBuffer()).then(buf => WebAssembly.instantiate(buf, {
   env: { millis: () => Math.floor(performance.now()) >>> 0 }
 })).then(({ instance }) => {
   ex = instance.exports;

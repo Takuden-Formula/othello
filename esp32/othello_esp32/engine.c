@@ -5,12 +5,26 @@
  *   - bitboard move generation (fast on 32-bit MCUs too)
  *   - iterative deepening PVS with a transposition table
  *   - move ordering (hash move, shallow eval, fastest-first in the endgame)
- *   - evaluation: mobility, potential mobility, corners, X/C squares, stable discs, parity
+ *   - evaluation: pattern weights learned from self-play games (patterns.h, weights.c,
+ *     tools/train/). Without OTH_PATTERNS (ESP32: not enough memory) a hand-written one is used:
+ *     mobility, potential mobility, corners, X/C squares, stable discs, parity
  *   - perfect endgame: once depth >= empties the search plays the game out exactly
+ *     (parity ordering for the last empties, jump to the exact search near the end)
  */
 #include "engine.h"
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef OTH_PATTERNS
+# if defined(ARDUINO)
+#  define OTH_PATTERNS 0
+# else
+#  define OTH_PATTERNS 1
+# endif
+#endif
+#if OTH_PATTERNS
+# include "patterns.h"
+#endif
 
 #ifndef OTH_TT_BITS
 # if defined(ARDUINO)
@@ -21,6 +35,10 @@
 #endif
 
 #define INF 30000
+
+#ifndef OTH_ENDGAME_JUMP
+# define OTH_ENDGAME_JUMP 8      /* go straight to the exact search once depth + this >= empties */
+#endif
 
 static const uint64_t NOT_A   = 0xFEFEFEFEFEFEFEFEULL;
 static const uint64_t NOT_H   = 0x7F7F7F7F7F7F7F7FULL;
@@ -181,6 +199,59 @@ static const struct { int c, x, c1, c2; } CORNER_INFO[4] = {
     { 0,  9,  1,  8 }, { 7, 14,  6, 15 }, { 56, 49, 57, 48 }, { 63, 54, 62, 55 }
 };
 
+#if OTH_PATTERNS
+/* ---- pattern evaluation: weights in 1/16 disc, per phase: 4 scalars then the pattern tables */
+extern const uint32_t oth_wdata_len;
+extern const unsigned char oth_wdata[];
+static PatSet pset;
+static int16_t *pweights;
+static int pstride;
+
+static int load_weights(void)
+{
+    const unsigned char *d = oth_wdata, *end = oth_wdata + oth_wdata_len;
+    int n, i = 0;
+    if (pweights) return 1;
+    pat_build(&pset);
+    pstride = PAT_SCALARS + pset.offset[PAT_TYPES];
+    n = PAT_PHASES * pstride;
+    pweights = (int16_t *)calloc((size_t)n, sizeof(int16_t));
+    if (!pweights) return 0;
+    while (d < end && i < n) {
+        unsigned v = 0, sh = 0, zero = (*d == 0);
+        if (zero) d++;
+        do { v |= (unsigned)(*d & 127) << sh; sh += 7; } while (*d++ & 128);
+        if (zero) i += (int)v;
+        else pweights[i++] = (int16_t)((v & 1) ? (int)((v + 1) / 2) : -(int)(v / 2));
+    }
+    return 1;
+}
+
+static int pattern_eval(uint64_t P, uint64_t O, uint64_t mP, uint64_t mO)
+{
+    uint64_t E = ~(P | O);
+    int ne = pc(E), k, i;
+    const int16_t *w = pweights + (size_t)pat_phase(ne) * pstride;
+    const int16_t *t = w + PAT_SCALARS;
+    int32_t s = w[0]
+        + w[1] * (pc(mP) - pc(mO))
+        + w[2] * (pc(neighbours(O) & E) - pc(neighbours(P) & E))
+        + w[3] * ((ne & 1) ? 1 : -1);
+    for (k = 0; k < pset.n; k++) {
+        uint32_t x = 0;
+        for (i = pset.len[k] - 1; i >= 0; i--) {
+            int sq = pset.sq[k][i];
+            x = x * 3 + (uint32_t)((P >> sq & 1) | (O >> sq & 1) << 1);
+        }
+        s += t[pset.offset[pset.type[k]] + x];
+    }
+    s = s * OTH_SCALE / 16;
+    if (s > OTH_EVAL_MAX)  s = OTH_EVAL_MAX;
+    if (s < -OTH_EVAL_MAX) s = -OTH_EVAL_MAX;
+    return (int)s;
+}
+#endif
+
 static int evaluate(uint64_t P, uint64_t O)
 {
     uint64_t E = ~(P | O), mP = oth_moves(P, O), mO = oth_moves(O, P);
@@ -188,6 +259,9 @@ static int evaluate(uint64_t P, uint64_t O)
     int wMob, wPot, wFront, wStab, wDisc;
 
     if (!mP && !mO) return final_score(P, O);
+#if OTH_PATTERNS
+    if (pweights) return pattern_eval(P, O, mP, mO);
+#endif
 
     if (ne > 40)      { wMob = 90; wPot = 25; wFront = 30; wStab = 120; wDisc = -4; }
     else if (ne > 20) { wMob = 80; wPot = 20; wFront = 25; wStab = 150; wDisc = 0;  }
@@ -251,6 +325,9 @@ uint32_t oth_init(void)
 {
     int bits = OTH_TT_BITS;
     init_diagonals();
+#if OTH_PATTERNS
+    load_weights();
+#endif
     if (tt) return tt_mask + 1;
     while (bits >= 8) {
         tt = (TTEntry *)calloc((size_t)1 << bits, sizeof(TTEntry));
@@ -295,6 +372,21 @@ static uint64_t nodes;
 static uint32_t t_start, t_limit;
 static int aborted;
 
+/* ---- Multi-ProbCut: a shallow search predicts the deep one; if it is far outside the window,
+ * cut without searching deeply. sigma = spread of (deep - shallow) in eval units, measured by
+ * tools/train/mpc_calib.c per phase (empties / 6) and depth. Not used in exact endgame searches. */
+#ifndef OTH_MPC
+# define OTH_MPC OTH_PATTERNS     /* the sigmas were measured with the pattern evaluation */
+#endif
+#define MPC_MIN_DEPTH 3
+#define MPC_MAX_DEPTH 14
+#define MPC_T10       15         /* cut at 1.5 sigma */
+static int mpc_on = OTH_MPC;
+static const int16_t MPC_SIGMA[11][MPC_MAX_DEPTH + 1] = {
+#include "mpc_sigma.h"
+};
+static inline int mpc_shallow(int d) { return d - 2 * ((d + 3) / 4); }
+
 static const int8_t SQW[64] = {
     100, -20, 10,  5,  5, 10, -20, 100,
     -20, -50, -2, -2, -2, -2, -50, -20,
@@ -308,19 +400,34 @@ static const int8_t SQW[64] = {
 
 typedef struct { uint64_t f; int sq; int key; } Move;
 
+/* Empties in quadrants with an odd number of empties: playing there first usually lets the side to
+ * move also take the last move of that region (parity). */
+static inline uint64_t odd_regions(uint64_t E)
+{
+    static const uint64_t QUAD[4] = {
+        0x000000000F0F0F0FULL, 0x00000000F0F0F0F0ULL, 0x0F0F0F0F00000000ULL, 0xF0F0F0F000000000ULL
+    };
+    uint64_t r = 0;
+    int k;
+    for (k = 0; k < 4; k++) if (pc(E & QUAD[k]) & 1) r |= QUAD[k];
+    return r;
+}
+
 /* Exact solver for the last few empties (no hash table, cheap ordering). */
 static int solve_small(uint64_t P, uint64_t O, int alpha, int beta, int passed)
 {
-    uint64_t moves = oth_moves(P, O), order[2];
+    uint64_t moves = oth_moves(P, O), order[3], odd;
     int best = -INF, i;
     nodes++;
     if (!moves) {
         if (passed) return final_score(P, O);
         return -solve_small(O, P, -beta, -alpha, 1);
     }
-    order[0] = moves & CORNERS;
-    order[1] = moves & ~CORNERS;
-    for (i = 0; i < 2; i++) {
+    odd = odd_regions(~(P | O));
+    order[0] = moves & odd & CORNERS;
+    order[1] = moves & odd & ~CORNERS;
+    order[2] = moves & ~odd;
+    for (i = 0; i < 3; i++) {
         uint64_t m = order[i];
         while (m) {
             int sq = lsb(m), v;
@@ -366,6 +473,25 @@ static int search(uint64_t P, uint64_t O, int depth, int alpha, int beta, int pa
         }
     }
 
+    if (mpc_on && depth >= MPC_MIN_DEPTH && depth < ne && beta < OTH_EVAL_MAX && alpha > -OTH_EVAL_MAX) {
+        int sig = MPC_SIGMA[ne / 6][depth > MPC_MAX_DEPTH ? MPC_MAX_DEPTH : depth] * MPC_T10 / 10;
+        int ds = mpc_shallow(depth), bound, v;
+        if (sig > 0) {
+            bound = beta + sig;
+            if (bound < OTH_EVAL_MAX) {
+                v = search(P, O, ds, bound - 1, bound, passed);
+                if (aborted) return 0;
+                if (v >= bound) return beta;
+            }
+            bound = alpha - sig;
+            if (bound > -OTH_EVAL_MAX) {
+                v = search(P, O, ds, bound, bound + 1, passed);
+                if (aborted) return 0;
+                if (v <= bound) return alpha;
+            }
+        }
+    }
+
     /* generate + score moves */
     while (moves) {
         int sq = lsb(moves), key;
@@ -374,8 +500,9 @@ static int search(uint64_t P, uint64_t O, int depth, int alpha, int beta, int pa
         moves &= moves - 1;
         if (sq == hashmove) key = 1 << 28;
         else if (depth >= ne) {
-            /* endgame: fastest first (leave the opponent few replies) */
-            key = -pc(oth_moves(cp, co)) * 64 + ((b & CORNERS) ? 48 : 0) - pc(f);
+            /* endgame: fastest first (leave the opponent few replies), then parity */
+            key = -pc(oth_moves(cp, co)) * 64 + ((b & CORNERS) ? 48 : 0) - pc(f)
+                + ((b & odd_regions(E)) ? 20 : 0);
         } else if (depth >= 4) {
             key = -evaluate(cp, co);
         } else {
@@ -481,6 +608,8 @@ SearchResult oth_search(const Board *bd, uint32_t time_ms, int max_depth)
             }
         }
         if (d >= ne) { r.exact = 1; break; }
+        /* near the end, the last few midgame depths cost about as much as solving: jump to it */
+        if (ne <= 26 && d >= ne - OTH_ENDGAME_JUMP && d < ne - 1) d = ne - 1;
         /* the next iteration would most likely not finish */
         if ((uint32_t)(oth_millis() - t_start) * 3 > t_limit && d >= 4) break;
     }
@@ -490,6 +619,8 @@ SearchResult oth_search(const Board *bd, uint32_t time_ms, int max_depth)
 }
 
 /* ---------------------------------------------------------------- perft */
+
+void oth_set_mpc(int on) { mpc_on = on; }
 
 uint64_t oth_perft(uint64_t P, uint64_t O, int depth, int passed)
 {

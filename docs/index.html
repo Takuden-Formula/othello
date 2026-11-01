@@ -260,7 +260,7 @@ import { Records } from './records.js?v=1';
 import { Sfx } from './sound.js?v=1';
 
 const $ = id => document.getElementById(id);
-const WASM = 'othello.wasm?v=1';   // raise v when othello.wasm changes (GitHub Pages caches ~10 min)
+const WASM = 'othello.wasm?v=2';   // raise v when othello.wasm changes (GitHub Pages caches ~10 min)
 const FULL = (1n << 64n) - 1n;
 const split = (p, o) => [Number(p & 0xffffffffn), Number(p >> 32n), Number(o & 0xffffffffn), Number(o >> 32n)];
 const name = sq => 'abcdefgh'[sq & 7] + ((sq >> 3) + 1);
@@ -290,7 +290,7 @@ let selSide = 'b', resultAt = 0, modeAt = 0, lastInput = performance.now(), quit
 
 function mkWorker() {
   if (worker) worker.terminate();
-  worker = new Worker('worker.js?v=1');
+  worker = new Worker('worker.js?v=2');
   worker.onmessage = onResult;
   worker.onerror = () => aiError('');
 }

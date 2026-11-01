@@ -1,6 +1,6 @@
 # オセロ（最強AI）
 
-C 言語で作ったオセロ AI（ビットボード＋αβ探索（PVS）＋置換表。終盤は最後まで読み切る）に、お客さんが挑戦する展示ゲームです。紅陵祭2026 電気自動車同好会の展示用。
+C 言語で作ったオセロ AI（ビットボード＋αβ探索（PVS）＋置換表＋Multi-ProbCut、**自己対戦で学習したパターン評価**。終盤は最後まで読み切る）に、お客さんが挑戦する展示ゲームです。紅陵祭2026 電気自動車同好会の展示用。
 
 紅陵祭2026 のゲーム一覧：https://takuden-formula.github.io/koryosai2026/
 
@@ -157,19 +157,46 @@ Safari で **https://takuden-formula.github.io/othello/** を開き、共有ボ�
 | `serve.ps1`, `起動.bat`, `起動_全画面.bat` | ローカルサーバ（`docs/` を配信）と起動用（Windows） |
 | `起動_Mac.command`, `起動_全画面_Mac.command`, `mac/start.sh`, `mac/serve.pl` | ローカルサーバと起動用（Mac。サーバは標準の Perl） |
 | `mac/install.sh` | Mac へ 1 行で入れるスクリプト（デスクトップに `othello` を作る） |
-| `src/` | AI 本体 `engine.c` / `engine.h`、ターミナル版 `main.c`、`Makefile`（Linux / ラズパイは `make`）、ブラウザ版の橋渡し `wasm_api.c` |
+| `src/` | AI 本体 `engine.c` / `engine.h`、評価の形 `patterns.h`、学習した重み `weights.c`（自動生成）、MPC の表 `mpc_sigma.h`（自動生成）、ターミナル版 `main.c`、`Makefile`（Linux / ラズパイは `make`）、ブラウザ版の橋渡し `wasm_api.c` |
 | `windows/othello.exe`, `windows/遊び方.txt` | ターミナル版（Windows）。ダブルクリックで遊べる |
 | `mac/オセロ_Mac.command` | ターミナル版（Mac）。初回だけ自動でビルド。`1`（黒）/`2`（白）/`3`（AI どうし）を選び `d3` のように打つ。`undo`・`hint`・`quit`。`-t 10` で 1 手 10 秒 |
 | `esp32/othello_esp32/` | ESP32 用 Arduino スケッチ（シリアルモニタ 115200bps で遊ぶ） |
 | `tools/build_wasm.sh` | `othello.wasm` を作り直す（`pip install ziglang` か zig が必要） |
+| `tools/train/` | 評価の学習：自己対戦でデータを作る `selfplay.c`、重みを学習して `src/weights.c` を書く `train.c`、MPC の表を測る `mpc_calib.c` |
+
+### ラズパイ（Linux）で動かす
+```
+cd src
+make
+./othello            # あなた = 黒、AI は 1 手 3 秒
+./othello -c w -t 10 # あなた = 白、AI は 1 手 10 秒
+./othello -c none    # AI どうし
+```
+置換表 48 MB ＋重み 3 MB を使います（Raspberry Pi 3 以降なら問題なし）。`gcc` は Raspberry Pi OS に最初から入っています。
+
+### AI のしくみ（2026-11-01 に強くした）
+| 部分 | 中身 |
+|---|---|
+| 評価 | 盤面を 46 個の形（辺＋X 打ち・隅 3×3・隅 2×5・2〜4 列目・斜め 4〜8）に分け、形ごとに「その並びは何石ぶん得か」を表で持つ（10 段階の局面ごと、約 167,000 通り × 10）。表は自己対戦 約 13 万局・800 万局面から最小二乗法で学習。序盤は「同じ対局の 8 手先の評価」を目標に混ぜて（TD 学習）、結果のばらつきを減らす |
+| 探索 | αβ（PVS）＋置換表＋反復深化。**Multi-ProbCut**：浅い読みで「深く読んでも結果が窓の外」と高い確率で分かる枝を切る（ずれの大きさは `mpc_calib.c` で測った表） |
+| 終盤 | 空きが少なくなったら途中の深さを飛ばして最後まで読む。偶数理論（空きが奇数の区画から打つ）で手の順を並べる。完全読みでは MPC を使わない（結果は正確） |
+| ESP32 | メモリが足りないので学習した評価と MPC は使わず、前の手書きの評価（`OTH_PATTERNS=0`） |
+
+前の版との比較（同じ PC・同じ持ち時間 1 手 0.05 秒、ランダムな 8 手の序盤 200 通りを先後入れ替えて 400 局）：**347 勝 40 敗 13 分け（勝率 88%、平均 +20 石）**。同じ局面を 2 秒読むと深さ 13 → 17。空き 20 の完全読みは平均 6.7 秒 → 0.55 秒（結果は前の版と全局面で一致）。ブラウザ版の最強（初期値 3 秒）は序盤から深さ 17 前後まで読みます。
 
 ### AI を直したとき
-- `src/engine.c` / `engine.h` を直したら `esp32/othello_esp32/` にもコピーする
-- ブラウザ版：`bash tools/build_wasm.sh` → `docs/index.html` と `docs/worker.js` の `?v=1` の数字を1つ上げる（GitHub Pages は 10 分ほどキャッシュするため）→ コミットして push（1〜2分で反映）
-- Windows 版：MinGW gcc で `gcc -O3 -march=x86-64-v2 -static -s -o othello.exe main.c engine.c`（`src/` で）
+- `src/engine.c` / `engine.h` を直したら `esp32/othello_esp32/` にもコピーする（`mpc_sigma.h` も。`patterns.h` と `weights.c` は ESP32 では使わない）
+- ブラウザ版：`bash tools/build_wasm.sh` → `docs/index.html` と `docs/worker.js` の `?v=2` の数字を1つ上げる（GitHub Pages は 10 分ほどキャッシュするため）→ コミットして push（1〜2分で反映）
+- Windows 版：`src/` で `python -m ziglang cc -target x86_64-windows-gnu -O3 -march=x86_64_v2 -s -o ../windows/othello.exe main.c engine.c weights.c`（MinGW gcc なら `gcc -O3 -march=x86-64-v2 -static -s -o othello.exe main.c engine.c weights.c`）
+- 評価を学習し直す（12 コアの PC で 1 時間ほど。データは数百 MB になるのでリポジトリの外に置く）：
+  1. `selfplay.c` を `src/engine.c src/weights.c` と一緒にビルドし、`selfplay 7000 <seed> 4 r_<seed>.bin` をコアの数だけ別々の seed で並べて動かす
+  2. `train.c` をビルドし、`train src/weights.c 60 r_*.bin`（前のデータも一緒に渡すとよい）
+  3. `mpc_calib.c`（`weights.c` と一緒にビルド）で `mpc_calib 1500 r_*.bin > src/mpc_sigma.h`
+  4. 前の版と対局させて強くなったか確かめてから、上の手順でブラウザ版・Windows 版を作り直す
 - Mac のターミナル版：次に `オセロ_Mac.command` を開いたときに自動でビルドし直す
 
 ## 6. 確認状況
+- **確認済み（2026-11-01、AI を強くしたとき）**：前の版との 400 局の対局（上の結果）、空き 16 と 20 の完全読みの結果が前の版と全局面で一致、perft（手の生成）が前と同じ数、ブラウザ版（WebAssembly）で最強と対局して深さ 17・エラーなし、Windows 版 `othello.exe` の起動、ESP32 向けの設定（`ARDUINO` 定義）でコンパイルが通ること。**ラズパイ実機と ESP32 実機では未確認**
 - **確認済み（2026-11、Windows の Chrome）**：
   - `python -m http.server` と `serve.ps1`（ポート 8801）で配信して、待機（AI どうしのデモ）→ タップ → 黒白・強さを選ぶ → 対局 → 結果 → 待機、の流れ。やさしい（勝ち：評価 B・本日 1 位・これまでの最高）と最強（1 秒設定で負け：評価 C）を最後まで自動で打って確認
   - ヒント（黄色く光る・回数が減る）、待った（前の手番に戻る・回数 0 で押せなくなる）、やめる（2 回押し・「中止」で記録）、ふたりで対戦、放置で待機に戻る、結果画面が 15 秒で待機に戻る

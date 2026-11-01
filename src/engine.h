@@ -52,6 +52,9 @@ int      oth_score_to_discs(int score, int *proven);
 
 uint64_t oth_perft(uint64_t p, uint64_t o, int depth, int passed);
 
+/* Multi-ProbCut (selective search) on/off, for testing. On by default. */
+void     oth_set_mpc(int on);
+
 #ifdef __cplusplus
 }
 #endif

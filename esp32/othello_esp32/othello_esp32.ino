@@ -1,7 +1,8 @@
 /*
  * Othello for ESP32 - play over the serial monitor (115200 bps, line ending = LF or CR+LF)
  *
- * engine.c / engine.h in this folder are the same engine as the PC / Raspberry Pi version.
+ * engine.c / engine.h in this folder are the same engine as the PC / Raspberry Pi version
+ * (built without the learned pattern evaluation, which needs ~3 MB of RAM; see OTH_PATTERNS).
  *
  * Commands:
  *   d3        play a move
