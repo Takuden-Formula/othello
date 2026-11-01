@@ -113,6 +113,9 @@ body[data-mode=result] #banner{top:14%}
 
 #gear{position:fixed;z-index:4;top:10px;right:12px;background:rgba(255,255,255,.7);border:1px solid #c6d2de;border-radius:10px;font-size:24px;
   min-height:0;padding:2px 10px;opacity:.55;touch-action:none}
+#fsBtn{position:fixed;z-index:4;right:12px;bottom:6px;min-height:0;padding:4px 12px;font-size:14px;background:rgba(255,255,255,.8);
+  border:1px solid #c6d2de;border-radius:10px;opacity:.8}
+#fsBtn[hidden]{display:none}
 #gear.hold{opacity:1;background:var(--ac);color:#fff;transition:background 1s linear}
 #fsHint{position:fixed;z-index:5;top:60px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.72);color:#fff;font-size:22px;font-weight:bold;
   padding:10px 24px;border-radius:12px;display:none;pointer-events:none;text-align:center}
@@ -200,6 +203,7 @@ body[data-mode=result] #banner{top:14%}
 </div>
 
 <button id="gear" title="設定（S キー。タッチ端末は長押し 1 秒）">⚙</button>
+<button id="fsBtn" title="F キーでも全画面"></button>
 <div id="fsHint">画面をタップ／クリックすると全画面になります（Esc で解除 ・ F で再び全画面）</div>
 <div id="status"><span id="stAi">AI: 読み込み中…</span> ・ <span id="stRec"></span> ・ <span id="stStats"></span></div>
 
@@ -798,7 +802,7 @@ function enterFullscreen() {
 }
 function updateFsHint() { $('fsHint').style.display = wantFs && !fsDone && !fsEl() ? 'block' : 'none'; }
 const autoFs = e => {
-  if (!wantFs || fsDone || fsEl()) return;
+  if (!wantFs || fsDone || fsEl() || (e.target.closest && e.target.closest('#fsBtn'))) return;
   if (e.type === 'keydown' && ['Escape', 'f', 'F', 's', 'S'].includes(e.key)) return;
   fsDone = true; enterFullscreen(); updateFsHint();
 };
@@ -806,6 +810,13 @@ document.addEventListener('pointerdown', autoFs); document.addEventListener('key
 const onFsChange = () => { if (fsEl()) fsDone = true; updateFsHint(); };
 document.addEventListener('fullscreenchange', onFsChange); document.addEventListener('webkitfullscreenchange', onFsChange);
 updateFsHint();
+function exitFullscreen() { const fn = document.exitFullscreen || document.webkitExitFullscreen; if (fn) fn.call(document); }
+// 全画面ボタン：押すたびに全画面 ⇔ 元に戻す。全画面にできないブラウザ（iPhone の Safari など）では出さない
+const fsOK = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+function updateFsBtn() { const b = $('fsBtn'); b.hidden = !fsOK; b.textContent = fsEl() ? '全画面をやめる' : '⛶ 全画面'; }
+$('fsBtn').addEventListener('click', e => { e.stopPropagation(); e.currentTarget.blur(); fsDone = true; if (fsEl()) exitFullscreen(); else enterFullscreen(); });
+document.addEventListener('fullscreenchange', updateFsBtn); document.addEventListener('webkitfullscreenchange', updateFsBtn);
+updateFsBtn();
 
 // ---------- 起動 ----------
 buildBoard();
